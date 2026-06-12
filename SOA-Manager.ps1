@@ -98,6 +98,7 @@ $script:LogFile   = Join-Path $script:Root ("SOA-Manager_{0}.log" -f (Get-Date -
 $script:BackupDir = Join-Path $script:Root 'SOA-Backups'
 $script:ExportDir = Join-Path $script:Root 'SOA-Exports'
 $script:LogBuffer = New-Object System.Collections.ArrayList
+$script:Spinner   = $null   # background-runspace spinner (see Start-LoadSpinner)
 
 # Connection state
 $script:Conn = @{
@@ -656,6 +657,55 @@ function Show-ReportModal {
     }
 }
 
+function Start-LoadSpinner {
+    # Animates the indeterminate-progress spinner from a background runspace
+    # so it keeps moving while the main thread is blocked inside a cmdlet
+    # pipeline (e.g. waiting for the first page of Get-Mailbox results).
+    # Write-ProgressModal publishes the spinner cell coordinates into State;
+    # X = 0 means hidden. Each [Console]::Write is a single synchronized call
+    # writing a complete, absolutely positioned sequence, so the background
+    # writes never tear against the main thread's full-modal repaints.
+    if ($script:Spinner) { return }
+    try {
+        $state = [hashtable]::Synchronized(@{
+            X = 0; Y = 0; Run = $true
+            Style = [string]$script:T.Row; Reset = [string]$script:T.Reset
+        })
+        $ps = [powershell]::Create()
+        [void]$ps.AddScript({
+            param($state)
+            $esc = [char]27
+            $frames = '|', '/', '-', '\'
+            while ($state.Run) {
+                $x = $state.X; $y = $state.Y
+                if ($x -gt 0 -and $y -gt 0) {
+                    # Same frame formula as Write-ProgressModal so background
+                    # ticks and full repaints stay in phase.
+                    $f = $frames[[int](([Environment]::TickCount -band 0x7FFFFFFF) / 120) % 4]
+                    [Console]::Write(('{0}[{1};{2}H{3}{4}{5}' -f $esc, $y, $x, $state.Style, $f, $state.Reset))
+                }
+                Start-Sleep -Milliseconds 120
+            }
+        }).AddArgument($state)
+        $script:Spinner = @{ PS = $ps; Handle = $ps.BeginInvoke(); State = $state }
+    } catch {
+        Write-SoaLog -Message ("Load spinner unavailable: {0}" -f $_.Exception.Message) -Level WARN
+        $script:Spinner = $null
+    }
+}
+
+function Stop-LoadSpinner {
+    # Idempotent; joins the runspace so no stray writes can land after return.
+    if (-not $script:Spinner) { return }
+    $sp = $script:Spinner
+    $script:Spinner = $null
+    try {
+        $sp.State.Run = $false
+        [void]$sp.PS.EndInvoke($sp.Handle)
+        $sp.PS.Dispose()
+    } catch { }
+}
+
 function Write-ProgressModal {
     # Stateless render of a progress modal; caller invokes repeatedly.
     # Total > 0  : determinate - percent bar, "Processing X of Y".
@@ -711,6 +761,16 @@ function Write-ProgressModal {
     $boxH = $body.Count + 4
     $x = [Math]::Max(1, [int](($W - $boxW) / 2) + 1)
     $y = [Math]::Max(1, [int](($H - $boxH) / 2) + 1)
+    # Publish the spinner cell to the background spinner runspace (if any):
+    # the suffix slot after the marquee bar. Determinate modals hide it.
+    if ($script:Spinner) {
+        if ($Total -gt 0) {
+            $script:Spinner.State.X = 0
+        } else {
+            $script:Spinner.State.Y = $y + 3
+            $script:Spinner.State.X = $x + 2 + $barW + 3
+        }
+    }
     $sb = New-Object System.Text.StringBuilder
     $hChar = [string]$g.H
     $tt = " $Title "
@@ -1828,6 +1888,9 @@ function Invoke-TabLoad {
     }
     Write-Screen
     $title = 'Loading ' + $Tab['Name']
+    # Start the spinner first so this initial paint already publishes its
+    # coordinates - the whole point is animating before the first results.
+    Start-LoadSpinner
     Write-ProgressModal -Title $title -Done 0 -Total 0 -Label 'Contacting service - waiting for first results...' -Ok 0 -Failed 0
     $renderState = @{ LastTick = 0 }
     # GetNewClosure() binds the scriptblock to a dynamic module whose command
@@ -1852,10 +1915,16 @@ function Invoke-TabLoad {
     }.GetNewClosure()
     try {
         $items = @()
-        switch ($Tab['Noun']) {
-            'mailboxes' { $items = Get-MailboxItems -Progress $progressCb }
-            'groups'    { $items = Get-GroupItems -Progress $progressCb }
-            'contacts'  { $items = Get-ContactItems -Progress $progressCb }
+        try {
+            switch ($Tab['Noun']) {
+                'mailboxes' { $items = Get-MailboxItems -Progress $progressCb }
+                'groups'    { $items = Get-GroupItems -Progress $progressCb }
+                'contacts'  { $items = Get-ContactItems -Progress $progressCb }
+            }
+        } finally {
+            # Join the spinner runspace BEFORE the catch handlers below can
+            # draw modals, so no stray spinner frame lands on top of them.
+            Stop-LoadSpinner
         }
         $Tab['Items'] = @($items)
         $Tab['Loaded'] = $true
