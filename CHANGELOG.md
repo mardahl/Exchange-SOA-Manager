@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-12
+
+### Added
+
+- **Live progress while loading.** Mailboxes now stream from Exchange Online
+  in pages of 250, and the loading modal shows a running count and elapsed
+  time as results arrive. Graph group/contact pages and the batched SOA-state
+  lookups report the same way. Previously the modal sat at a static 0% until
+  the entire result set had arrived, which looked like a hang on larger
+  tenants.
+- **Esc cancels loading.** A load in progress can be aborted with Esc; the
+  tab stays unloaded and can be reloaded with `R` or `Enter`.
+
+### Changed
+
+- Loads with an unknown total render an animated marquee bar with a spinner
+  instead of a static 0% percent bar.
+
 ## [1.1.0] - 2026-06-12
 
 ### Added
@@ -56,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mardahl/Exchange-SOA-Manager/releases/tag/v1.0.0

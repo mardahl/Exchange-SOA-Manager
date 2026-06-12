@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.1.0'
+$script:Version = '1.2.0'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -658,18 +658,36 @@ function Show-ReportModal {
 
 function Write-ProgressModal {
     # Stateless render of a progress modal; caller invokes repeatedly.
+    # Total > 0  : determinate - percent bar, "Processing X of Y".
+    # Total <= 0 : indeterminate - marquee bar + spinner, "Retrieved X so far";
+    #              used while streaming results whose total is not known upfront.
     param([string]$Title, [int]$Done, [int]$Total, [string]$Label, [int]$Ok, [int]$Failed)
     $t = $script:T; $g = $script:G
-    $pct = 0
-    if ($Total -gt 0) { $pct = [int](100 * $Done / $Total) }
     $innerW = 60
     $barW = $innerW - 7
-    $fill = 0
-    if ($Total -gt 0) { $fill = [int]($barW * $Done / $Total) }
-    if ($fill -gt $barW) { $fill = $barW }
-    $bar = $t.BarOn + ([string]$g.BarOn * $fill) + $t.BarOff + ([string]$g.BarOff * ($barW - $fill)) + $t.Reset + $t.Row + (' {0,3}%' -f $pct)
+    $hint = 'working...'
+    if ($Total -gt 0) {
+        $pct = [int](100 * $Done / $Total)
+        $fill = [int]($barW * $Done / $Total)
+        if ($fill -gt $barW) { $fill = $barW }
+        $bar = $t.BarOn + ([string]$g.BarOn * $fill) + $t.BarOff + ([string]$g.BarOff * ($barW - $fill)) + $t.Reset + $t.Row + (' {0,3}%' -f $pct)
+        $head = "Processing $Done of $Total"
+    } else {
+        # Marquee: short segment bouncing across the bar; frame from the clock
+        # so every repaint advances it. Suffix is 5 visible chars, like ' 100%'.
+        $segW = 8
+        $span = $barW - $segW
+        $frame = [int](([Environment]::TickCount -band 0x7FFFFFFF) / 120)
+        $phase = $frame % (2 * $span)
+        $pos = $phase
+        if ($phase -gt $span) { $pos = (2 * $span) - $phase }
+        $spin = @('|', '/', '-', '\')[$frame % 4]
+        $bar = $t.BarOff + ([string]$g.BarOff * $pos) + $t.BarOn + ([string]$g.BarOn * $segW) + $t.BarOff + ([string]$g.BarOff * ($span - $pos)) + $t.Reset + $t.Row + ('   {0} ' -f $spin)
+        $head = "Retrieved $Done so far"
+        $hint = 'Esc cancels - working...'
+    }
     $body = @(
-        @($t.Row,   ("Processing $Done of $Total")),
+        @($t.Row,   $head),
         @($t.Row,   ''),
         @('RAWBAR', $bar),
         @($t.Row,   ''),
@@ -715,7 +733,7 @@ function Write-ProgressModal {
         $row++
     }
     [void]$sb.Append("$script:ESC[$row;$($x)H").Append($t.Border).Append([string]$g.V).Append($t.Reset).Append(' ')
-    [void]$sb.Append($t.Muted).Append((Get-PadCell 'working...' $innerBox -AlignRight)).Append($t.Reset)
+    [void]$sb.Append($t.Muted).Append((Get-PadCell $hint $innerBox -AlignRight)).Append($t.Reset)
     [void]$sb.Append(' ').Append($t.Border).Append([string]$g.V).Append($t.Reset)
     $row++
     [void]$sb.Append("$script:ESC[$row;$($x)H").Append($t.Border).Append([string]$g.BL).Append($hChar * ($boxW - 2)).Append([string]$g.BR).Append($t.Reset)
@@ -740,6 +758,7 @@ function Show-HelpModal {
         @($t.Row, '  F                    cycle status filter All/Cloud/On-prem/Pending'),
         @($t.Row, '  S                    cycle sort column     D  flip sort direction'),
         @($t.Row, '  R                    reload data from the service'),
+        @($t.Row, '  Esc                  cancel a load in progress'),
         @($t.Row, '  E                    export current view to CSV'),
         @($t.Row, '  I                    import CSV/TXT and select matching entries'),
         @($t.Row, ''),
@@ -946,8 +965,9 @@ function Disconnect-AllServices {
 # ============================================================================
 
 function Invoke-GraphGetAll {
-    # Paged GET; returns array of PSObjects from .value
-    param([string]$Uri, [switch]$Advanced)
+    # Paged GET; returns array of PSObjects from .value.
+    # -OnPage (optional) is invoked with the cumulative item count after each page.
+    param([string]$Uri, [switch]$Advanced, [scriptblock]$OnPage)
     $headers = @{}
     if ($Advanced) { $headers['ConsistencyLevel'] = 'eventual' }
     $out = New-Object System.Collections.ArrayList
@@ -957,6 +977,7 @@ function Invoke-GraphGetAll {
         $val = Get-PropSafe $resp 'value'
         if ($null -ne $val) { foreach ($v in @($val)) { [void]$out.Add($v) } }
         $next = Get-PropSafe $resp '@odata.nextLink'
+        if ($OnPage) { & $OnPage $out.Count }
     }
     return ,$out.ToArray()
 }
@@ -964,7 +985,8 @@ function Invoke-GraphGetAll {
 function Get-SyncBehaviorMap {
     # Batched lookup of isCloudManaged for a set of object ids.
     # $Resource: 'groups' or 'contacts'. Returns hashtable id -> [bool]
-    param([string[]]$Ids, [string]$Resource)
+    # -Progress (optional) is invoked per batch with (count, label).
+    param([string[]]$Ids, [string]$Resource, [scriptblock]$Progress)
     $map = @{}
     if (-not $Ids -or $Ids.Count -eq 0) { return $map }
     $chunkSize = 20
@@ -996,6 +1018,9 @@ function Get-SyncBehaviorMap {
             } else {
                 Write-SoaLog -Message ("onPremisesSyncBehavior lookup failed for {0}/{1} (HTTP {2})." -f $Resource, $objId, $status) -Level WARN
             }
+        }
+        if ($Progress) {
+            & $Progress ($end + 1) ('Checking SOA state - {0} of {1} converted {2}' -f ($end + 1), $Ids.Count, $Resource)
         }
     }
     return $map
@@ -1079,17 +1104,41 @@ function New-DemoContacts {
 #region Data fetchers
 # ============================================================================
 
+function Format-ElapsedTime {
+    param([System.Diagnostics.Stopwatch]$Stopwatch)
+    $s = [int]$Stopwatch.Elapsed.TotalSeconds
+    if ($s -ge 60) { return ('{0}m {1:d2}s' -f [int][Math]::Floor($s / 60), ($s % 60)) }
+    return ('{0}s' -f $s)
+}
+
 function Get-MailboxItems {
+    # -Progress (optional) is invoked with (count, label) as results stream in.
+    param([scriptblock]$Progress)
     if ($script:DemoMode) { return ,(New-DemoMailboxes) }
     Write-SoaLog -Message 'Retrieving dir-synced mailboxes from Exchange Online...'
     $props = @('DisplayName','PrimarySmtpAddress','UserPrincipalName','IsDirSynced','IsExchangeCloudManaged','RecipientTypeDetails','ExternalDirectoryObjectId')
-    $boxes = $null
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $boxes = New-Object System.Collections.ArrayList
     try {
-        $boxes = Get-EXOMailbox -ResultSize Unlimited -Properties $props -ErrorAction Stop
+        # -PageSize 250 (instead of the 1000 default) trades a few extra round
+        # trips for feedback: results stream into the pipeline page by page, so
+        # the progress modal advances every few seconds instead of sitting at
+        # zero until the entire result set has arrived.
+        Get-EXOMailbox -ResultSize Unlimited -PageSize 250 -Properties $props -ErrorAction Stop | ForEach-Object {
+            [void]$boxes.Add($_)
+            if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
+        }
+    } catch [System.OperationCanceledException] {
+        throw
     } catch {
         Write-SoaLog -Message ("Get-EXOMailbox failed ({0}); falling back to Get-Mailbox." -f $_.Exception.Message) -Level WARN
-        $boxes = Get-Mailbox -ResultSize Unlimited -ErrorAction Stop
+        $boxes.Clear()
+        Get-Mailbox -ResultSize Unlimited -ErrorAction Stop | ForEach-Object {
+            [void]$boxes.Add($_)
+            if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
+        }
     }
+    if ($Progress) { & $Progress $boxes.Count 'Filtering dir-synced mailboxes...' }
     $items = New-Object System.Collections.ArrayList
     $total = 0
     foreach ($mb in @($boxes)) {
@@ -1127,21 +1176,33 @@ function Get-GroupKind {
 }
 
 function Get-GroupItems {
+    # -Progress (optional) is invoked with (count, label) as results stream in.
+    param([scriptblock]$Progress)
     if ($script:DemoMode) { return ,(New-DemoGroups) }
     Write-SoaLog -Message 'Retrieving groups from Microsoft Graph...'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $phase = @{ Text = 'synced groups' }
+    $pageCb = $null
+    if ($Progress) {
+        $pageCb = { param($n) & $Progress $n ('{0} {1} received - {2} elapsed' -f $n, $phase.Text, (Format-ElapsedTime $sw)) }.GetNewClosure()
+    }
     $sel = 'id,displayName,mail,mailEnabled,securityEnabled,groupTypes,onPremisesSyncEnabled,onPremisesSecurityIdentifier'
     $base = 'https://graph.microsoft.com/v1.0/groups'
 
     # 1) Groups still synced from AD (SOA = on-prem)
-    $synced = Invoke-GraphGetAll -Uri ($base + '?$filter=onPremisesSyncEnabled eq true&$select=' + $sel + '&$top=999&$count=true') -Advanced
+    $synced = Invoke-GraphGetAll -Uri ($base + '?$filter=onPremisesSyncEnabled eq true&$select=' + $sel + '&$top=999&$count=true') -Advanced -OnPage $pageCb
 
     # 2) Formerly synced groups (SOA converted, or rolled back awaiting sync)
+    $phase.Text = 'converted groups'
     $former = @()
     try {
-        $former = Invoke-GraphGetAll -Uri ($base + '?$filter=onPremisesSyncEnabled ne true and onPremisesSecurityIdentifier ne null&$select=' + $sel + '&$top=999&$count=true') -Advanced
+        $former = Invoke-GraphGetAll -Uri ($base + '?$filter=onPremisesSyncEnabled ne true and onPremisesSecurityIdentifier ne null&$select=' + $sel + '&$top=999&$count=true') -Advanced -OnPage $pageCb
+    } catch [System.OperationCanceledException] {
+        throw
     } catch {
         Write-SoaLog -Message ("Advanced group filter failed ({0}); enumerating all groups instead." -f $_.Exception.Message) -Level WARN
-        $all = Invoke-GraphGetAll -Uri ($base + '?$select=' + $sel + '&$top=999')
+        $phase.Text = 'groups'
+        $all = Invoke-GraphGetAll -Uri ($base + '?$select=' + $sel + '&$top=999') -OnPage $pageCb
         $former = @($all | Where-Object {
             (-not [bool](Get-PropSafe $_ 'onPremisesSyncEnabled')) -and ($null -ne (Get-PropSafe $_ 'onPremisesSecurityIdentifier'))
         })
@@ -1150,7 +1211,7 @@ function Get-GroupItems {
     $behavior = @{}
     if ($former.Count -gt 0) {
         $ids = @($former | ForEach-Object { [string](Get-PropSafe $_ 'id') })
-        $behavior = Get-SyncBehaviorMap -Ids $ids -Resource 'groups'
+        $behavior = Get-SyncBehaviorMap -Ids $ids -Resource 'groups' -Progress $Progress
     }
 
     $items = New-Object System.Collections.ArrayList
@@ -1174,16 +1235,23 @@ function Get-GroupItems {
 }
 
 function Get-ContactItems {
+    # -Progress (optional) is invoked with (count, label) as results stream in.
+    param([scriptblock]$Progress)
     if ($script:DemoMode) { return ,(New-DemoContacts) }
     Write-SoaLog -Message 'Retrieving organizational contacts from Microsoft Graph...'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $pageCb = $null
+    if ($Progress) {
+        $pageCb = { param($n) & $Progress $n ('{0} contacts received - {1} elapsed' -f $n, (Format-ElapsedTime $sw)) }.GetNewClosure()
+    }
     $sel = 'id,displayName,mail,onPremisesSyncEnabled'
-    $all = Invoke-GraphGetAll -Uri ('https://graph.microsoft.com/v1.0/contacts?$select=' + $sel + '&$top=999')
+    $all = Invoke-GraphGetAll -Uri ('https://graph.microsoft.com/v1.0/contacts?$select=' + $sel + '&$top=999') -OnPage $pageCb
     $synced  = @($all | Where-Object { [bool](Get-PropSafe $_ 'onPremisesSyncEnabled') })
     $others  = @($all | Where-Object { -not [bool](Get-PropSafe $_ 'onPremisesSyncEnabled') })
     $behavior = @{}
     if ($others.Count -gt 0) {
         $ids = @($others | ForEach-Object { [string](Get-PropSafe $_ 'id') })
-        $behavior = Get-SyncBehaviorMap -Ids $ids -Resource 'contacts'
+        $behavior = Get-SyncBehaviorMap -Ids $ids -Resource 'contacts' -Progress $Progress
     }
     $items = New-Object System.Collections.ArrayList
     foreach ($c in $synced) {
@@ -1707,19 +1775,38 @@ function Invoke-TabLoad {
         if (-not (Connect-GraphService)) { return }
     }
     Write-Screen
-    Write-ProgressModal -Title ("Loading " + $Tab['Name']) -Done 0 -Total 1 -Label 'Querying service - this can take a while...' -Ok 0 -Failed 0
+    $title = 'Loading ' + $Tab['Name']
+    Write-ProgressModal -Title $title -Done 0 -Total 0 -Label 'Contacting service - waiting for first results...' -Ok 0 -Failed 0
+    $renderState = @{ LastTick = 0 }
+    $progressCb = {
+        param($Count, $Label)
+        # Esc aborts the load; other keys typed during loading are discarded
+        # so they do not fire as hotkeys once the load completes.
+        while ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::Escape) {
+                throw (New-Object System.OperationCanceledException 'Load cancelled by user.')
+            }
+        }
+        $now = [Environment]::TickCount
+        if (($now - $renderState.LastTick) -lt 150) { return }
+        $renderState.LastTick = $now
+        Write-ProgressModal -Title $title -Done $Count -Total 0 -Label $Label -Ok 0 -Failed 0
+    }.GetNewClosure()
     try {
         $items = @()
         switch ($Tab['Noun']) {
-            'mailboxes' { $items = Get-MailboxItems }
-            'groups'    { $items = Get-GroupItems }
-            'contacts'  { $items = Get-ContactItems }
+            'mailboxes' { $items = Get-MailboxItems -Progress $progressCb }
+            'groups'    { $items = Get-GroupItems -Progress $progressCb }
+            'contacts'  { $items = Get-ContactItems -Progress $progressCb }
         }
         $Tab['Items'] = @($items)
         $Tab['Loaded'] = $true
         $Tab['Cursor'] = 0
         $Tab['Scroll'] = 0
         Update-TabView -Tab $Tab
+    } catch [System.OperationCanceledException] {
+        Write-SoaLog -Message ("Loading {0} cancelled by user (Esc). Press R or Enter to reload." -f $Tab['Name']) -Level WARN
     } catch {
         Write-SoaLog -Message ("Failed to load {0}: {1}" -f $Tab['Name'], $_.Exception.Message) -Level ERROR
         Show-MsgModal -Title 'Load failed' -Lines @(("Failed to load " + $Tab['Name'] + ":"), $_.Exception.Message) -Kind Error

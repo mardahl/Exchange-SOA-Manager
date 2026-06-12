@@ -93,6 +93,7 @@ Microsoft now supports moving the SOA for Exchange attributes (and whole directo
 | `O` | Convert selection back to **on-prem-managed** SOA |
 | `E` / `I` | Export view to CSV / import CSV-TXT selection |
 | `R` | Reload from the service |
+| `Esc` | Cancel a load in progress |
 | `W` | Disconnect sessions |
 | `?` | Help · `Q` quit |
 
