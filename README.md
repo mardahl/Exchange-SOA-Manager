@@ -111,7 +111,7 @@ Microsoft now supports moving the SOA for Exchange attributes (and whole directo
 | Mailbox SOA + org config | **Exchange Administrator** (or Global Administrator) |
 | Group / contact SOA | **Hybrid Identity Administrator** + admin consent for the Graph scopes below |
 
-Graph scopes requested: `Group.Read.All`, `GroupMember.Read.All`, `User.Read.All`, `Group-OnPremisesSyncBehavior.ReadWrite.All`, `OrgContact.Read.All`, `OrgContact-OnPremisesSyncBehavior.ReadWrite.All`.
+Graph scopes requested: `Group.Read.All`, `GroupMember.Read.All`, `User.Read.All`, `Group-OnPremisesSyncBehavior.ReadWrite.All`, `OrgContact.Read.All`, `Contacts-OnPremisesSyncBehavior.ReadWrite.All`.
 
 > The `*-OnPremisesSyncBehavior` scopes require **admin consent** in the tenant. See [Configure Group SOA](https://learn.microsoft.com/entra/identity/hybrid/how-to-group-source-of-authority-configure#grant-permission-to-apps).
 

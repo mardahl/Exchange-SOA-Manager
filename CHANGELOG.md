@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-12
+
+### Fixed
+
+- **Loading crashed in connected sessions.** All three list tabs failed with
+  `The term 'Write-ProgressModal' is not recognized` (or
+  `'Format-ElapsedTime' is not recognized`) as soon as the first results
+  streamed in. The progress callbacks are created with `GetNewClosure()`,
+  which binds them to a dynamic module that cannot resolve script-scope
+  functions by name when the script runs in its own script scope (the normal
+  `./SOA-Manager.ps1` launch). Function references are now captured into
+  variables and invoked through them. Demo mode never hit the callbacks,
+  which is why this slipped through.
+- **`Get-EXOMailbox` failed and fell back to `Get-Mailbox`.** The v3
+  ExchangeOnlineManagement module removed the `-PageSize` parameter, so every
+  mailbox load logged
+  `Get-EXOMailbox failed (A parameter cannot be found that matches parameter
+  name 'PageSize'.)` and used the slower fallback. `-PageSize` is gone;
+  results still stream into the progress modal page by page (1000 per page,
+  the service default).
+- **Contact SOA Graph scope was wrong.** The sign-in requested the
+  non-existent `OrgContact-OnPremisesSyncBehavior.ReadWrite.All` scope, which
+  would fail the entire Microsoft Graph connection. Corrected to the
+  documented `Contacts-OnPremisesSyncBehavior.ReadWrite.All`.
+
 ## [1.2.0] - 2026-06-12
 
 ### Added
@@ -74,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mardahl/Exchange-SOA-Manager/releases/tag/v1.0.0

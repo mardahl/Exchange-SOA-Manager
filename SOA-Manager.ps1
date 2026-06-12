@@ -35,7 +35,7 @@
       * Groups / Contacts: Hybrid Identity Administrator + admin consent for
         Group.Read.All, GroupMember.Read.All, User.Read.All,
         Group-OnPremisesSyncBehavior.ReadWrite.All, OrgContact.Read.All,
-        OrgContact-OnPremisesSyncBehavior.ReadWrite.All
+        Contacts-OnPremisesSyncBehavior.ReadWrite.All
 
 .PARAMETER Demo
     Run with generated sample data. No connections are made and nothing is
@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.2.0'
+$script:Version = '1.2.1'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -909,7 +909,7 @@ function Connect-GraphService {
         'User.Read.All'
         'Group-OnPremisesSyncBehavior.ReadWrite.All'
         'OrgContact.Read.All'
-        'OrgContact-OnPremisesSyncBehavior.ReadWrite.All'
+        'Contacts-OnPremisesSyncBehavior.ReadWrite.All'
     )
     Invoke-OnMainBuffer -Action {
         Write-Host ''
@@ -933,7 +933,7 @@ function Connect-GraphService {
         Show-MsgModal -Title 'Connection failed' -Lines @(
             'Could not establish a Microsoft Graph session.',
             '',
-            'Note: the Group/OrgContact OnPremisesSyncBehavior scopes require admin consent in the tenant.'
+            'Note: the Group/Contacts OnPremisesSyncBehavior scopes require admin consent in the tenant.'
         ) -Kind Error
         return $false
     }
@@ -1120,11 +1120,11 @@ function Get-MailboxItems {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $boxes = New-Object System.Collections.ArrayList
     try {
-        # -PageSize 250 (instead of the 1000 default) trades a few extra round
-        # trips for feedback: results stream into the pipeline page by page, so
-        # the progress modal advances every few seconds instead of sitting at
-        # zero until the entire result set has arrived.
-        Get-EXOMailbox -ResultSize Unlimited -PageSize 250 -Properties $props -ErrorAction Stop | ForEach-Object {
+        # The v3 REST-based Get-EXOMailbox no longer supports -PageSize (it was
+        # removed with the EXO v2 module). Results still stream into the
+        # pipeline page by page (1000 per page), so the progress modal advances
+        # as data arrives instead of waiting for the entire result set.
+        Get-EXOMailbox -ResultSize Unlimited -Properties $props -ErrorAction Stop | ForEach-Object {
             [void]$boxes.Add($_)
             if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
         }
@@ -1184,7 +1184,10 @@ function Get-GroupItems {
     $phase = @{ Text = 'synced groups' }
     $pageCb = $null
     if ($Progress) {
-        $pageCb = { param($n) & $Progress $n ('{0} {1} received - {2} elapsed' -f $n, $phase.Text, (Format-ElapsedTime $sw)) }.GetNewClosure()
+        # Script-scope functions are not resolvable by name inside GetNewClosure()
+        # scriptblocks (see note in Invoke-TabLoad); capture a reference instead.
+        $fnElapsed = ${function:Format-ElapsedTime}
+        $pageCb = { param($n) & $Progress $n ('{0} {1} received - {2} elapsed' -f $n, $phase.Text, (& $fnElapsed $sw)) }.GetNewClosure()
     }
     $sel = 'id,displayName,mail,mailEnabled,securityEnabled,groupTypes,onPremisesSyncEnabled,onPremisesSecurityIdentifier'
     $base = 'https://graph.microsoft.com/v1.0/groups'
@@ -1242,7 +1245,10 @@ function Get-ContactItems {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $pageCb = $null
     if ($Progress) {
-        $pageCb = { param($n) & $Progress $n ('{0} contacts received - {1} elapsed' -f $n, (Format-ElapsedTime $sw)) }.GetNewClosure()
+        # Script-scope functions are not resolvable by name inside GetNewClosure()
+        # scriptblocks (see note in Invoke-TabLoad); capture a reference instead.
+        $fnElapsed = ${function:Format-ElapsedTime}
+        $pageCb = { param($n) & $Progress $n ('{0} contacts received - {1} elapsed' -f $n, (& $fnElapsed $sw)) }.GetNewClosure()
     }
     $sel = 'id,displayName,mail,onPremisesSyncEnabled'
     $all = Invoke-GraphGetAll -Uri ('https://graph.microsoft.com/v1.0/contacts?$select=' + $sel + '&$top=999') -OnPage $pageCb
@@ -1778,6 +1784,11 @@ function Invoke-TabLoad {
     $title = 'Loading ' + $Tab['Name']
     Write-ProgressModal -Title $title -Done 0 -Total 0 -Label 'Contacting service - waiting for first results...' -Ok 0 -Failed 0
     $renderState = @{ LastTick = 0 }
+    # GetNewClosure() binds the scriptblock to a dynamic module whose command
+    # lookup skips this script's scope, so script-level functions (e.g.
+    # Write-ProgressModal) are not resolvable by name inside the closure.
+    # Capture function references as variables and invoke those instead.
+    $fnProgressModal = ${function:Write-ProgressModal}
     $progressCb = {
         param($Count, $Label)
         # Esc aborts the load; other keys typed during loading are discarded
@@ -1791,7 +1802,7 @@ function Invoke-TabLoad {
         $now = [Environment]::TickCount
         if (($now - $renderState.LastTick) -lt 150) { return }
         $renderState.LastTick = $now
-        Write-ProgressModal -Title $title -Done $Count -Total 0 -Label $Label -Ok 0 -Failed 0
+        & $fnProgressModal -Title $title -Done $Count -Total 0 -Label $Label -Ok 0 -Failed 0
     }.GetNewClosure()
     try {
         $items = @()
