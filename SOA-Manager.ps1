@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.2.3'
+$script:Version = '1.3.0'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -1210,6 +1210,7 @@ function Format-ElapsedTime {
 
 function Get-MailboxItems {
     # -Progress (optional) is invoked with (count, label) as results stream in.
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'False positive: $Progress is used inside the $build scriptblock.')]
     param([scriptblock]$Progress)
     if ($script:DemoMode) { return ,(New-DemoMailboxes) }
     Write-SoaLog -Message 'Retrieving dir-synced mailboxes from Exchange Online...'

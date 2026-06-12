@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-12
+
+### Added
+
+- **Always-alive loading spinner.** The indeterminate progress spinner
+  (`| / - \`) is now animated by a small background runspace, so it keeps
+  spinning even while the main thread is blocked waiting for Exchange Online
+  to return the first page of results (previously the modal froze until
+  results started streaming).
+
+### Changed
+
+- **Mailbox loading uses far less memory.** `Get-Mailbox` has no parameter to
+  select properties server-side, so each returned mailbox (200+ properties)
+  is now projected down to the 7 properties the app actually uses as soon as
+  it streams in, in a single pass. The full objects are no longer buffered or
+  kept for the session, and the post-fetch "Filtering dir-synced mailboxes"
+  pass is gone.
+
+### Notes
+
+- Not yet manually tested on Windows PowerShell 5.1 for this release; the
+  APIs used by the spinner (runspaces, synchronized hashtables, console
+  writes) are identical across editions, and CI parse/compatibility checks
+  pass on both engines.
+
 ## [1.2.3] - 2026-06-12
 
 ### Fixed
