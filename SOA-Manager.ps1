@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.2.2'
+$script:Version = '1.2.3'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -859,6 +859,22 @@ function Connect-ExoService {
     if (-not (Test-SoaModule -Name 'ExchangeOnlineManagement')) {
         if (-not (Install-SoaModule -Name 'ExchangeOnlineManagement')) { return $false }
     }
+    # Workaround for https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394:
+    # ExchangeOnlineManagement and Microsoft.Graph.Authentication bundle different
+    # versions of the MSAL assemblies (Microsoft.Identity.Client and
+    # Microsoft.IdentityModel.Abstractions). .NET loads an assembly only once per
+    # process, so whichever module imports first wins. If EXO's older MSAL loads
+    # first, Connect-MgGraph later fails with:
+    #   "Method not found: ... WithLogging(Microsoft.IdentityModel.Abstractions.IIdentityLogger, Boolean)"
+    # Importing Microsoft.Graph.Authentication BEFORE ExchangeOnlineManagement pins
+    # the newer assemblies, which both modules can use.
+    if (Test-SoaModule -Name 'Microsoft.Graph.Authentication') {
+        try {
+            Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+        } catch {
+            Write-SoaLog -Message ("Pre-import of Microsoft.Graph.Authentication failed ({0}); Graph sign-in may hit a known MSAL conflict." -f $_.Exception.Message) -Level WARN
+        }
+    }
     Write-SoaLog -Message 'Connecting to Exchange Online...'
     $script:LastConnectError = $null
     Invoke-OnMainBuffer -Action {
@@ -903,6 +919,7 @@ function Connect-GraphService {
         if (-not (Install-SoaModule -Name 'Microsoft.Graph.Authentication')) { return $false }
     }
     Write-SoaLog -Message 'Connecting to Microsoft Graph...'
+    $script:LastConnectError = $null
     $scopes = @(
         'Group.Read.All'
         'GroupMember.Read.All'
@@ -922,6 +939,7 @@ function Connect-GraphService {
             Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
             Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
         } catch {
+            $script:LastConnectError = $_.Exception.Message
             Write-Host "Graph connection failed: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
@@ -930,6 +948,25 @@ function Connect-GraphService {
     try { $ctx = Get-MgContext } catch { $ctx = $null }
     if ($null -eq $ctx) {
         Write-SoaLog -Message 'Graph connection failed or was cancelled.' -Level ERROR
+        if ([string]$script:LastConnectError -like '*Method not found*WithLogging*') {
+            # Known MSAL assembly conflict between ExchangeOnlineManagement and
+            # Microsoft.Graph.Authentication; see msgraph-sdk-powershell issue #3394.
+            # Once the wrong DLL is loaded, only a fresh process fixes it.
+            Write-SoaLog -Message 'Known module conflict detected (Graph SDK issue #3394): Exchange Online loaded an incompatible MSAL assembly first.' -Level ERROR
+            Show-MsgModal -Title 'Connection failed' -Lines @(
+                'Could not establish a Microsoft Graph session.',
+                '',
+                'Cause: a known conflict between the ExchangeOnlineManagement and',
+                'Microsoft.Graph.Authentication modules (Graph SDK issue #3394).',
+                'Exchange Online loaded an older MSAL assembly into this session,',
+                'which Microsoft Graph cannot use.',
+                '',
+                'Fix: restart this tool (a fresh PowerShell process) and try again.',
+                'If the error persists, update both modules:',
+                '  Update-Module ExchangeOnlineManagement, Microsoft.Graph.Authentication'
+            ) -Kind Error
+            return $false
+        }
         Show-MsgModal -Title 'Connection failed' -Lines @(
             'Could not establish a Microsoft Graph session.',
             '',

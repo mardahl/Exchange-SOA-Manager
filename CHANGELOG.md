@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-06-12
+
+### Fixed
+
+- **Graph sign-in failed after connecting to Exchange Online.** `Connect-MgGraph`
+  threw `Method not found: '... WithLogging(Microsoft.IdentityModel.Abstractions.IIdentityLogger, Boolean)'`
+  whenever Exchange Online was connected first. This is a known, unresolved
+  conflict between the ExchangeOnlineManagement and Microsoft.Graph.Authentication
+  modules ([msgraph-sdk-powershell #3394](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394)):
+  both bundle different versions of the MSAL assemblies, and whichever module
+  loads first wins for the whole process. The script now imports
+  `Microsoft.Graph.Authentication` before `ExchangeOnlineManagement` so the
+  newer MSAL assemblies are pinned first. If the conflict still occurs (e.g. the
+  Graph module was installed mid-session), a dedicated error dialog now explains
+  the cause and tells the user to restart the tool and/or update both modules.
+
 ## [1.2.2] - 2026-06-12
 
 ### Fixed
@@ -112,7 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.1.0...v1.2.0
