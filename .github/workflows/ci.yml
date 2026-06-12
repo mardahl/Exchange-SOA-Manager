@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PSScriptAnalyzer (PowerShell 7)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer (incl. 5.1/7.0 syntax compatibility)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $settings = @{
+              Rules = @{
+                  PSUseCompatibleSyntax = @{
+                      Enable         = $true
+                      TargetVersions = @('5.1', '7.0')
+                  }
+              }
+          }
+          $results = Invoke-ScriptAnalyzer -Path ./SOA-Manager.ps1 -Settings $settings -Severity Error, Warning
+          if ($results.Count -gt 0) {
+              $results | Format-Table RuleName, Severity, Line, Message -AutoSize | Out-String | Write-Host
+              throw "PSScriptAnalyzer reported $($results.Count) finding(s)."
+          }
+          Write-Host 'PSScriptAnalyzer: clean.'
+
+  parse-ps51:
+    name: Parse check (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse with the Windows PowerShell 5.1 engine
+        shell: powershell
+        run: |
+          Write-Host "Engine: $($PSVersionTable.PSVersion)"
+          $errs = $null; $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\SOA-Manager.ps1", [ref]$tokens, [ref]$errs)
+          if ($errs.Count -gt 0) {
+              $errs | ForEach-Object { Write-Host ("L{0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
+              throw "Parse errors under Windows PowerShell 5.1."
+          }
+          Write-Host 'Parse OK under Windows PowerShell 5.1.'
+
+  parse-ps7:
+    name: Parse check (PowerShell 7)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse with the PowerShell 7 engine
+        shell: pwsh
+        run: |
+          Write-Host "Engine: $($PSVersionTable.PSVersion)"
+          $errs = $null; $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/SOA-Manager.ps1", [ref]$tokens, [ref]$errs)
+          if ($errs.Count -gt 0) {
+              $errs | ForEach-Object { Write-Host ("L{0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
+              throw "Parse errors under PowerShell 7."
+          }
+          Write-Host 'Parse OK under PowerShell 7.'
