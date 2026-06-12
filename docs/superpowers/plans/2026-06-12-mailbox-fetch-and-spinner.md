@@ -44,7 +44,9 @@ function Get-Mailbox {
 }
 
 $calls = New-Object System.Collections.ArrayList
-$items = @(Get-MailboxItems -Progress { param($n, $l) [void]$calls.Add($n) })
+# Mirror app usage (Invoke-TabLoad): assign first, then wrap with @().
+$result = Get-MailboxItems -Progress { param($n, $l) [void]$calls.Add($n) }
+$items = @($result)
 
 if ($items.Count -ne 2) { throw "Expected 2 dir-synced items, got $($items.Count)" }
 if ($items[0].Name -ne 'Alice A' -or $items[1].Name -ne 'Bob B') { throw "Sort order wrong: $($items.Name -join ', ')" }

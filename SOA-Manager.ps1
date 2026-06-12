@@ -1154,49 +1154,58 @@ function Get-MailboxItems {
     if ($script:DemoMode) { return ,(New-DemoMailboxes) }
     Write-SoaLog -Message 'Retrieving dir-synced mailboxes from Exchange Online...'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $boxes = New-Object System.Collections.ArrayList
-    try {
-        # Retrieve only dir-synced mailboxes from the server side. This is extremely
-        # fast and avoids fetching all cloud-only mailboxes (which can cause
-        # timeouts or throttling in large tenants), and correctly populates the
-        # IsExchangeCloudManaged property which is unsupported in Get-EXOMailbox.
-        Get-Mailbox -Filter "IsDirSynced -eq `$true" -ResultSize Unlimited -ErrorAction Stop | ForEach-Object {
-            [void]$boxes.Add($_)
-            if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
-        }
-    } catch [System.OperationCanceledException] {
-        throw
-    } catch {
-        # Fallback in case of filter issues, though Get-Mailbox is the only source of IsExchangeCloudManaged
-        Write-SoaLog -Message ("Filtered Get-Mailbox failed ({0}); trying unrestricted Get-Mailbox." -f $_.Exception.Message) -Level WARN
-        $boxes.Clear()
-        Get-Mailbox -ResultSize Unlimited -ErrorAction Stop | ForEach-Object {
-            [void]$boxes.Add($_)
-            if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
-        }
-    }
-    if ($Progress) { & $Progress $boxes.Count 'Filtering dir-synced mailboxes...' }
     $items = New-Object System.Collections.ArrayList
-    $total = 0
-    foreach ($mb in @($boxes)) {
-        $total++
-        if (-not [bool](Get-PropSafe $mb 'IsDirSynced')) { continue }
+    $stats = @{ Received = 0 }
+    # Get-Mailbox has no -Properties parameter (and Get-EXOMailbox, which has
+    # one, does not expose IsExchangeCloudManaged), so the full 200+ property
+    # object always crosses the wire. Project each one to a slim record as
+    # soon as it streams in so the heavy object can be garbage-collected
+    # instead of being buffered - and kept alive in Raw - for the session.
+    $build = {
+        param($mb)
+        $stats.Received++
+        if ($Progress) { & $Progress $stats.Received ('{0} mailboxes received - {1} elapsed' -f $stats.Received, (Format-ElapsedTime $sw)) }
+        if (-not [bool](Get-PropSafe $mb 'IsDirSynced')) { return }
+        $cloud = [bool](Get-PropSafe $mb 'IsExchangeCloudManaged')
+        $slim = [pscustomobject]@{
+            DisplayName               = [string](Get-PropSafe $mb 'DisplayName')
+            UserPrincipalName         = [string](Get-PropSafe $mb 'UserPrincipalName')
+            PrimarySmtpAddress        = [string](Get-PropSafe $mb 'PrimarySmtpAddress')
+            RecipientTypeDetails      = [string](Get-PropSafe $mb 'RecipientTypeDetails')
+            IsDirSynced               = $true
+            IsExchangeCloudManaged    = $cloud
+            ExternalDirectoryObjectId = [string](Get-PropSafe $mb 'ExternalDirectoryObjectId')
+        }
         $soa = 'OnPrem'
-        if ([bool](Get-PropSafe $mb 'IsExchangeCloudManaged')) { $soa = 'Cloud' }
-        $id = [string](Get-PropSafe $mb 'ExternalDirectoryObjectId')
-        if ([string]::IsNullOrEmpty($id)) { $id = [string](Get-PropSafe $mb 'UserPrincipalName') }
+        if ($cloud) { $soa = 'Cloud' }
+        $id = $slim.ExternalDirectoryObjectId
+        if ([string]::IsNullOrEmpty($id)) { $id = $slim.UserPrincipalName }
         [void]$items.Add([pscustomobject]@{
             Type     = 'Mailbox'
             Id       = $id
-            Name     = [string](Get-PropSafe $mb 'DisplayName')
-            Email    = [string](Get-PropSafe $mb 'PrimarySmtpAddress')
-            Detail   = [string](Get-PropSafe $mb 'RecipientTypeDetails')
+            Name     = $slim.DisplayName
+            Email    = $slim.PrimarySmtpAddress
+            Detail   = $slim.RecipientTypeDetails
             Soa      = $soa
             Selected = $false
-            Raw      = $mb
+            Raw      = $slim
         })
     }
-    Write-SoaLog -Message ("Retrieved {0} mailboxes; {1} are dir-synced (shown)." -f $total, $items.Count) -Level OK
+    try {
+        # Retrieve only dir-synced mailboxes from the server side. This is
+        # extremely fast and avoids fetching all cloud-only mailboxes (which
+        # can cause timeouts or throttling in large tenants).
+        Get-Mailbox -Filter "IsDirSynced -eq `$true" -ResultSize Unlimited -ErrorAction Stop | ForEach-Object { & $build $_ }
+    } catch [System.OperationCanceledException] {
+        throw
+    } catch {
+        # Fallback in case of filter issues; $build skips non-dir-synced items.
+        Write-SoaLog -Message ("Filtered Get-Mailbox failed ({0}); trying unrestricted Get-Mailbox." -f $_.Exception.Message) -Level WARN
+        $items.Clear()
+        $stats.Received = 0
+        Get-Mailbox -ResultSize Unlimited -ErrorAction Stop | ForEach-Object { & $build $_ }
+    }
+    Write-SoaLog -Message ("Retrieved {0} mailboxes; {1} are dir-synced (shown)." -f $stats.Received, $items.Count) -Level OK
     return ,($items.ToArray() | Sort-Object -Property Name)
 }
 
