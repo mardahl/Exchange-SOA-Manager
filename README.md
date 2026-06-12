@@ -114,6 +114,8 @@ Graph scopes requested: `Group.Read.All`, `GroupMember.Read.All`, `User.Read.All
 
 > The `*-OnPremisesSyncBehavior` scopes require **admin consent** in the tenant. See [Configure Group SOA](https://learn.microsoft.com/entra/identity/hybrid/how-to-group-source-of-authority-configure#grant-permission-to-apps).
 
+> **Using PIM?** Activate the relevant role **before** connecting - the tool shows the required role on each tab and in the sign-in prompt. If you activate a role *after* connecting, press `W` to disconnect, then reconnect to get a fresh token.
+
 ### Sync client versions (Microsoft prerequisites)
 
 - Mailbox attribute SOA: Entra **Connect Sync ≥ 2.5.190.0** (or Cloud Sync)

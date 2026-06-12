@@ -55,7 +55,7 @@
     .\SOA-Manager.ps1 -Demo
 
 .NOTES
-    Version : 1.0.0
+    Version : 1.1.0
     License : MIT
     Inspired by codeandersen's Exchange-SOA-Conversion-tool (WinForms, users
     only) - this tool adds groups, contacts, the tenant-wide default switch
@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.0.0'
+$script:Version = '1.1.0'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -641,7 +641,7 @@ function Show-ReportModal {
     $scroll = 0
     while ($true) {
         Write-Screen
-        $geo = Write-ModalFrame -Title $Title -BodyLines $norm -FooterHint $Hint -BorderStyle $script:T.Border -MinWidth 78
+        $geo = Write-ModalFrame -Title $Title -BodyLines $norm -FooterHint $Hint -BorderStyle $script:T.Border -MinWidth 78 -BodyScroll $scroll
         $k = Read-ModalKey
         switch ($k.Key) {
             'Enter'     { $script:UI.Dirty = $true; return }
@@ -753,6 +753,12 @@ function Show-HelpModal {
         @($t.Row, '  E                    enable cloud-managed default for new mailboxes'),
         @($t.Row, '  D                    revert to server-managed default'),
         @($t.Row, ''),
+        @($t.ModalTitle, 'Required roles (PIM users: activate BEFORE connecting)'),
+        @($t.Row, '  Mailboxes            Exchange Admin (or Hybrid Identity / Global)'),
+        @($t.Row, '  Groups / Contacts    Hybrid Identity Admin + consented Graph scopes'),
+        @($t.Row, '  Organization         Hybrid Identity or Global Administrator'),
+        @($t.Row, '  Activated late?      W disconnects - reconnect for a fresh token'),
+        @($t.Row, ''),
         @($t.ModalTitle, 'Misc'),
         @($t.Row, '  W                    disconnect EXO + Graph sessions'),
         @($t.Row, '  ?                    this help          Q / Ctrl+C  quit'),
@@ -839,6 +845,9 @@ function Connect-ExoService {
     Invoke-OnMainBuffer -Action {
         Write-Host ''
         Write-Host 'Connecting to Exchange Online - complete sign-in in your browser...' -ForegroundColor Cyan
+        Write-Host '  Required role : Exchange Administrator (mailbox SOA; Hybrid Identity / Global Admin also work)' -ForegroundColor DarkGray
+        Write-Host '                  Hybrid Identity or Global Administrator (tenant-wide default)' -ForegroundColor DarkGray
+        Write-Host '  Using PIM?    : activate the role BEFORE completing sign-in.' -ForegroundColor Yellow
         try {
             Import-Module ExchangeOnlineManagement -ErrorAction Stop
             Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
@@ -886,6 +895,8 @@ function Connect-GraphService {
     Invoke-OnMainBuffer -Action {
         Write-Host ''
         Write-Host 'Connecting to Microsoft Graph - complete sign-in in your browser...' -ForegroundColor Cyan
+        Write-Host '  Required role : Hybrid Identity Administrator' -ForegroundColor DarkGray
+        Write-Host '  Using PIM?    : activate the role BEFORE completing sign-in.' -ForegroundColor Yellow
         Write-Host 'Requested scopes:' -ForegroundColor DarkGray
         foreach ($s in $scopes) { Write-Host "  $s" -ForegroundColor DarkGray }
         try {
@@ -1788,18 +1799,31 @@ function Add-ListView {
         $isConnected = $script:Conn[$Tab['Conn']]
         $lines = New-Object System.Collections.ArrayList
         if ($isConnected) {
-            [void]$lines.Add(@(($t.CtxHi + $Tab['Name'] + ' are not loaded yet.'), ($Tab['Name'].Length + 25)))
+            $head = $Tab['Name'] + ' are not loaded yet.'
         } else {
-            [void]$lines.Add(@(($t.CtxHi + 'Not connected to ' + $connName + '.'), (17 + $connName.Length + 1)))
+            $head = 'Not connected to ' + $connName + '.'
         }
+        [void]$lines.Add(@(($t.CtxHi + $head), $head.Length))
         [void]$lines.Add(@('', 0))
         $hint = 'Press Enter to connect and load.'
         if ($isConnected) { $hint = 'Press Enter to load.' }
-        [void]$lines.Add(@(($t.Muted + $hint), $hint.Length))
-        if ($Tab['Conn'] -eq 'Graph' -and -not $isConnected) {
+        [void]$lines.Add(@(($t.Row + $hint), $hint.Length))
+        if (-not $isConnected) {
             [void]$lines.Add(@('', 0))
-            $note = 'Requires admin-consented Graph scopes for OnPremisesSyncBehavior.'
-            [void]$lines.Add(@(($t.Muted + $note), $note.Length))
+            if ($Tab['Conn'] -eq 'Graph') {
+                $role = 'Required role: Hybrid Identity Administrator'
+                [void]$lines.Add(@(($t.Warn + $role), $role.Length))
+                $note = 'Graph scopes (incl. *-OnPremisesSyncBehavior) need one-time admin consent.'
+                [void]$lines.Add(@(($t.Muted + $note), $note.Length))
+            } else {
+                $role = 'Required role: Exchange Administrator (or Hybrid Identity / Global Admin)'
+                [void]$lines.Add(@(($t.Warn + $role), $role.Length))
+            }
+            [void]$lines.Add(@('', 0))
+            $pim1 = 'Using PIM? Activate the role BEFORE signing in.'
+            [void]$lines.Add(@(($t.Muted + $pim1), $pim1.Length))
+            $pim2 = 'Activated it after connecting? Press W to disconnect, then reconnect.'
+            [void]$lines.Add(@(($t.Muted + $pim2), $pim2.Length))
         }
         [void](Write-CenteredPanel -Sb $Sb -Lines $lines.ToArray() -Top 6 -Bottom ($H - 4) -Width $W)
         return
@@ -1864,10 +1888,20 @@ function Add-OrgView {
     for ($r = 4; $r -le ($H - 1); $r++) { Add-FrameLine -Sb $Sb -Row $r -Content '' }
 
     if (-not $script:Org.Loaded) {
+        $head = 'Organization configuration not loaded.'
+        $hint = 'Press Enter to connect to Exchange Online and read the current state.'
+        $role = 'Required role: Hybrid Identity Administrator or Global Administrator'
+        $pim1 = 'Using PIM? Activate the role BEFORE signing in.'
+        $pim2 = 'Activated it after connecting? Press W to disconnect, then reconnect.'
         $lines = @(
-            @(($t.CtxHi + 'Organization configuration not loaded.'), 38),
+            @(($t.CtxHi + $head), $head.Length),
             @('', 0),
-            @(($t.Muted + 'Press Enter to connect to Exchange Online and read the current state.'), 69)
+            @(($t.Row + $hint), $hint.Length),
+            @('', 0),
+            @(($t.Warn + $role), $role.Length),
+            @('', 0),
+            @(($t.Muted + $pim1), $pim1.Length),
+            @(($t.Muted + $pim2), $pim2.Length)
         )
         [void](Write-CenteredPanel -Sb $Sb -Lines $lines -Top 6 -Bottom ($H - 4) -Width $W)
         return

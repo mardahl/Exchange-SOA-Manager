@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-12
+
+### Added
+
+- **Role guidance for PIM users.** The connect panels on every tab, the
+  sign-in prompts, and the help overlay now state which directory role is
+  required (Exchange Administrator for mailbox SOA; Hybrid Identity
+  Administrator for group/contact SOA; Hybrid Identity or Global
+  Administrator for the tenant-wide default) and remind PIM users to activate
+  the role *before* signing in - plus how to refresh the token (`W` then
+  reconnect) when a role was activated late.
+
 ## [1.0.0] - 2026-06-12
 
 ### Added
@@ -44,5 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mardahl/Exchange-SOA-Manager/releases/tag/v1.0.0
