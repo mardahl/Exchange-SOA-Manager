@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keep CI actions current with one tidy PR per month at most
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
