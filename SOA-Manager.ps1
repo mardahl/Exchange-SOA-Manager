@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.2.1'
+$script:Version = '1.2.2'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -1116,22 +1116,22 @@ function Get-MailboxItems {
     param([scriptblock]$Progress)
     if ($script:DemoMode) { return ,(New-DemoMailboxes) }
     Write-SoaLog -Message 'Retrieving dir-synced mailboxes from Exchange Online...'
-    $props = @('DisplayName','PrimarySmtpAddress','UserPrincipalName','IsDirSynced','IsExchangeCloudManaged','RecipientTypeDetails','ExternalDirectoryObjectId')
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $boxes = New-Object System.Collections.ArrayList
     try {
-        # The v3 REST-based Get-EXOMailbox no longer supports -PageSize (it was
-        # removed with the EXO v2 module). Results still stream into the
-        # pipeline page by page (1000 per page), so the progress modal advances
-        # as data arrives instead of waiting for the entire result set.
-        Get-EXOMailbox -ResultSize Unlimited -Properties $props -ErrorAction Stop | ForEach-Object {
+        # Retrieve only dir-synced mailboxes from the server side. This is extremely
+        # fast and avoids fetching all cloud-only mailboxes (which can cause
+        # timeouts or throttling in large tenants), and correctly populates the
+        # IsExchangeCloudManaged property which is unsupported in Get-EXOMailbox.
+        Get-Mailbox -Filter "IsDirSynced -eq `$true" -ResultSize Unlimited -ErrorAction Stop | ForEach-Object {
             [void]$boxes.Add($_)
             if ($Progress) { & $Progress $boxes.Count ('{0} mailboxes received - {1} elapsed' -f $boxes.Count, (Format-ElapsedTime $sw)) }
         }
     } catch [System.OperationCanceledException] {
         throw
     } catch {
-        Write-SoaLog -Message ("Get-EXOMailbox failed ({0}); falling back to Get-Mailbox." -f $_.Exception.Message) -Level WARN
+        # Fallback in case of filter issues, though Get-Mailbox is the only source of IsExchangeCloudManaged
+        Write-SoaLog -Message ("Filtered Get-Mailbox failed ({0}); trying unrestricted Get-Mailbox." -f $_.Exception.Message) -Level WARN
         $boxes.Clear()
         Get-Mailbox -ResultSize Unlimited -ErrorAction Stop | ForEach-Object {
             [void]$boxes.Add($_)
@@ -1903,6 +1903,11 @@ function Add-ListView {
         }
         [void]$lines.Add(@(($t.CtxHi + $head), $head.Length))
         [void]$lines.Add(@('', 0))
+        if ($Tab['Noun'] -eq 'mailboxes' -or $Tab['Noun'] -eq 'groups' -or $Tab['Noun'] -eq 'contacts') {
+            $scopeNote = "Note: Only directory-synced (hybrid) $($Tab['Noun']) will be loaded."
+            [void]$lines.Add(@(($t.Muted + $scopeNote), $scopeNote.Length))
+            [void]$lines.Add(@('', 0))
+        }
         $hint = 'Press Enter to connect and load.'
         if ($isConnected) { $hint = 'Press Enter to load.' }
         [void]$lines.Add(@(($t.Row + $hint), $hint.Length))
