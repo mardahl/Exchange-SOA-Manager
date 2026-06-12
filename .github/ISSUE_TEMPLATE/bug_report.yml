@@ -1,0 +1,82 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much as you can -
+        the environment details matter a lot for a terminal UI.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: The Groups tab fails to load with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run .\SOA-Manager.ps1
+        2. Press 2 (Groups), then Enter
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: demo
+    attributes:
+      label: Reproducible in demo mode?
+      description: Does it also happen with `.\SOA-Manager.ps1 -Demo`?
+      options:
+        - "Yes - happens in demo mode too"
+        - "No - only against a real tenant"
+        - "Not tested"
+    validations:
+      required: true
+
+  - type: input
+    id: ps-version
+    attributes:
+      label: PowerShell version
+      description: Output of `$PSVersionTable.PSVersion`
+      placeholder: "5.1.26100.x / 7.5.x"
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      placeholder: "Windows Terminal / conhost / iTerm2 / ssh+tmux"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 24H2 / Server 2022 / macOS 15"
+    validations:
+      required: true
+
+  - type: input
+    id: modules
+    attributes:
+      label: Module versions (if relevant)
+      placeholder: "ExchangeOnlineManagement 3.x, Microsoft.Graph.Authentication 2.x"
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: |
+        Relevant lines from `SOA-Manager_<timestamp>.log`.
+        IMPORTANT - redact tenant names, UPNs and anything confidential.
+      render: text

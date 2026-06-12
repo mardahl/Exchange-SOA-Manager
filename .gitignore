@@ -1,0 +1,10 @@
+# Tool output (contains directory data - never commit)
+SOA-Backups/
+SOA-Exports/
+SOA-Manager_*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
