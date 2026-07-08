@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.3.0'
+$script:Version = '1.3.1'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -734,6 +734,7 @@ function Write-ProgressModal {
         $spin = @('|', '/', '-', '\')[$frame % 4]
         $bar = $t.BarOff + ([string]$g.BarOff * $pos) + $t.BarOn + ([string]$g.BarOn * $segW) + $t.BarOff + ([string]$g.BarOff * ($span - $pos)) + $t.Reset + $t.Row + ('   {0} ' -f $spin)
         $head = "Retrieved $Done so far"
+        if ($Done -le 0) { $head = 'Working - this can take a while...' }
         $hint = 'Esc cancels - working...'
     }
     $body = @(
@@ -1208,6 +1209,31 @@ function Format-ElapsedTime {
     return ('{0}s' -f $s)
 }
 
+function Invoke-ExoBackgroundFetch {
+    # Runs an EXO command in a background runspace so the main thread stays
+    # free to repaint the modal (elapsed time) and honor Esc while the EXO v3
+    # cmdlet buffers its entire result set. EXO v3 stores connections in a
+    # process-wide static, so the worker runspace reuses the live connection
+    # after importing the module. -Tick runs every poll; it may throw
+    # OperationCanceledException (Esc), which stops the worker and rethrows.
+    param([string]$Command, [scriptblock]$Tick)
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript('Import-Module ExchangeOnlineManagement -ErrorAction Stop; ' + $Command)
+    $handle = $ps.BeginInvoke()
+    try {
+        while (-not $handle.IsCompleted) {
+            if ($Tick) { & $Tick }
+            Start-Sleep -Milliseconds 150
+        }
+        return ,$ps.EndInvoke($handle)
+    } catch [System.OperationCanceledException] {
+        try { $ps.Stop() } catch { }
+        throw
+    } finally {
+        $ps.Dispose()
+    }
+}
+
 function Get-MailboxItems {
     # -Progress (optional) is invoked with (count, label) as results stream in.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'False positive: $Progress is used inside the $build scriptblock.')]
@@ -1225,7 +1251,11 @@ function Get-MailboxItems {
     $build = {
         param($mb)
         $stats.Received++
-        if ($Progress) { & $Progress $stats.Received ('{0} mailboxes received - {1} elapsed' -f $stats.Received, (Format-ElapsedTime $sw)) }
+        # EXO v3 cmdlets buffer the entire result set before the pipeline
+        # releases anything, so this only fires once everything has arrived.
+        # No point reporting a count; keep the call for the Esc-drain in the
+        # callback and pass 0 so the modal stays in "can take a while" mode.
+        if ($Progress) { & $Progress 0 ('This can take several minutes - {0} elapsed' -f (Format-ElapsedTime $sw)) }
         if (-not [bool](Get-PropSafe $mb 'IsDirSynced')) { return }
         $cloud = [bool](Get-PropSafe $mb 'IsExchangeCloudManaged')
         $slim = [pscustomobject]@{
@@ -1252,16 +1282,24 @@ function Get-MailboxItems {
             Raw      = $slim
         })
     }
+    $tick = {
+        if ($Progress) { & $Progress 0 ('This can take several minutes - {0} elapsed' -f (Format-ElapsedTime $sw)) }
+    }
     try {
         # Retrieve only dir-synced mailboxes from the server side. This is
         # extremely fast and avoids fetching all cloud-only mailboxes (which
-        # can cause timeouts or throttling in large tenants).
-        Get-Mailbox -Filter "IsDirSynced -eq `$true" -ResultSize Unlimited -ErrorAction Stop | ForEach-Object { & $build $_ }
+        # can cause timeouts or throttling in large tenants). Fetch runs in a
+        # background runspace: EXO v3 buffers everything before returning, so
+        # this keeps the main thread free for Esc-cancel and elapsed updates.
+        $cmd = 'Get-Mailbox -Filter "IsDirSynced -eq $true" -ResultSize Unlimited -ErrorAction Stop'
+        $raw = Invoke-ExoBackgroundFetch -Command $cmd -Tick $tick
+        foreach ($mb in $raw) { & $build $mb }
     } catch [System.OperationCanceledException] {
         throw
     } catch {
-        # Fallback in case of filter issues; $build skips non-dir-synced items.
-        Write-SoaLog -Message ("Filtered Get-Mailbox failed ({0}); trying unrestricted Get-Mailbox." -f $_.Exception.Message) -Level WARN
+        # Fallback for filter issues or a worker runspace that cannot see the
+        # EXO connection: blocking main-thread fetch, as before (no Esc).
+        Write-SoaLog -Message ("Background filtered Get-Mailbox failed ({0}); trying blocking unrestricted Get-Mailbox." -f $_.Exception.Message) -Level WARN
         $items.Clear()
         $stats.Received = 0
         Get-Mailbox -ResultSize Unlimited -ErrorAction Stop | ForEach-Object { & $build $_ }
@@ -1892,7 +1930,13 @@ function Invoke-TabLoad {
     # Start the spinner first so this initial paint already publishes its
     # coordinates - the whole point is animating before the first results.
     Start-LoadSpinner
-    Write-ProgressModal -Title $title -Done 0 -Total 0 -Label 'Contacting service - waiting for first results...' -Ok 0 -Failed 0
+    $loadLabel = 'Contacting service - waiting for first results...'
+    if ($Tab['Noun'] -eq 'mailboxes') {
+        # EXO buffers the whole result set before returning anything, so this
+        # label is on screen for the entire fetch - warn that it can be slow.
+        $loadLabel = 'Fetching mailboxes - this can take several minutes...'
+    }
+    Write-ProgressModal -Title $title -Done 0 -Total 0 -Label $loadLabel -Ok 0 -Failed 0
     $renderState = @{ LastTick = 0 }
     # GetNewClosure() binds the scriptblock to a dynamic module whose command
     # lookup skips this script's scope, so script-level functions (e.g.
