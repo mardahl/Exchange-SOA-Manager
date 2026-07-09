@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.3.2'
+$script:Version = '1.3.3'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -924,24 +924,50 @@ function Connect-ExoService {
     }
     # Workaround for https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394:
     # ExchangeOnlineManagement and Microsoft.Graph.Authentication bundle different
-    # versions of the MSAL assemblies (Microsoft.Identity.Client and
-    # Microsoft.IdentityModel.Abstractions). .NET loads an assembly only once per
-    # process, so whichever module imports first wins. If EXO's older MSAL loads
-    # first, Connect-MgGraph later fails with:
+    # versions of the MSAL assembly (Microsoft.Identity.Client). .NET loads an
+    # assembly by simple name only once per process, so the first version loaded
+    # wins for every module in the session. If EXO's older MSAL loads first,
+    # Connect-MgGraph later fails with:
     #   "Method not found: ... WithLogging(Microsoft.IdentityModel.Abstractions.IIdentityLogger, Boolean)"
-    # Importing Microsoft.Graph.Authentication BEFORE ExchangeOnlineManagement pins
-    # the newer assemblies, which both modules can use. This has to happen even
-    # when the operator only needs Exchange: once EXO's older MSAL loads, a later
-    # Graph sign-in in the same session is already broken. Installing Graph up
-    # front keeps the user's workflow (mailbox -> group/contact) from dead-ending.
+    #
+    # Import-Module Microsoft.Graph.Authentication does NOT load MSAL - the
+    # assembly is only pulled in when a module actually AUTHENTICATES (Connect-*).
+    # So merely importing Graph before EXO does nothing; EXO's Connect is the
+    # first thing to touch MSAL and pins the old version. See analysis at
+    # https://office365itpros.com/2025/09/24/assembly-clash-microsoft-365-ps/.
+    #
+    # Fix: explicitly load Graph's newer Microsoft.Identity.Client.dll into the
+    # process BEFORE EXO authenticates. This pins the newer MSAL without forcing
+    # a Graph sign-in, so EXO reuses it and a later Connect-MgGraph works - while
+    # keeping the mailbox-first workflow (no up-front Graph login).
     if (-not (Test-SoaModule -Name 'Microsoft.Graph.Authentication')) {
         [void](Install-SoaModule -Name 'Microsoft.Graph.Authentication')
     }
     if (Test-SoaModule -Name 'Microsoft.Graph.Authentication') {
         try {
-            Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+            $graphMod = Get-Module -ListAvailable -Name 'Microsoft.Graph.Authentication' |
+                Sort-Object Version -Descending | Select-Object -First 1
+            # Graph ships MSAL for both runtimes; pick the one matching this host
+            # (Core for PS7, Desktop for Windows PowerShell 5.1).
+            $edition = if ($PSVersionTable.PSEdition -eq 'Core') { 'Core' } else { 'Desktop' }
+            $msal = Get-ChildItem -Path $graphMod.ModuleBase -Recurse -Filter 'Microsoft.Identity.Client.dll' -ErrorAction Stop |
+                Where-Object { $_.FullName -match ('[\\/]{0}[\\/]' -f $edition) } |
+                Sort-Object { [version]$_.VersionInfo.FileVersion } -Descending |
+                Select-Object -First 1
+            # Fall back to any MSAL dll if the edition-specific folder layout differs.
+            if (-not $msal) {
+                $msal = Get-ChildItem -Path $graphMod.ModuleBase -Recurse -Filter 'Microsoft.Identity.Client.dll' -ErrorAction Stop |
+                    Sort-Object { [version]$_.VersionInfo.FileVersion } -Descending |
+                    Select-Object -First 1
+            }
+            if ($msal) {
+                [void][System.Reflection.Assembly]::LoadFrom($msal.FullName)
+                Write-SoaLog -Message ("Pre-loaded Graph MSAL assembly {0} (v{1}) to avoid the known EXO/Graph conflict (issue #3394)." -f $msal.Name, $msal.VersionInfo.FileVersion) -Level OK
+            } else {
+                Write-SoaLog -Message 'Could not locate Graph MSAL assembly (Microsoft.Identity.Client.dll); a later Graph sign-in may hit the known MSAL conflict (Graph SDK issue #3394).' -Level WARN
+            }
         } catch {
-            Write-SoaLog -Message ("Pre-import of Microsoft.Graph.Authentication failed ({0}); Graph sign-in may hit a known MSAL conflict." -f $_.Exception.Message) -Level WARN
+            Write-SoaLog -Message ("Pre-load of Graph MSAL assembly failed ({0}); Graph sign-in may hit the known MSAL conflict (issue #3394)." -f $_.Exception.Message) -Level WARN
         }
     } else {
         Write-SoaLog -Message 'Microsoft.Graph.Authentication is not available; a later Graph sign-in may hit a known MSAL conflict (Graph SDK issue #3394).' -Level WARN

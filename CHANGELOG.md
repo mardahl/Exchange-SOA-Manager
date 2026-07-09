@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-07-09
+
+### Fixed
+
+- **Graph sign-in still failed after Exchange Online in v1.3.2.** The MSAL
+  conflict workaround only ran `Import-Module Microsoft.Graph.Authentication`
+  before Exchange, but importing the module does **not** load the MSAL assembly
+  (`Microsoft.Identity.Client`) - that only happens when a module actually
+  authenticates. So `Connect-ExchangeOnline` was still the first call to touch
+  MSAL and pinned the older version, breaking a later `Connect-MgGraph`
+  ([msgraph-sdk-powershell #3394](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394)).
+  The workaround now explicitly loads Graph's newer `Microsoft.Identity.Client.dll`
+  into the process (via `Assembly.LoadFrom`) before Exchange authenticates, so
+  the newer MSAL is pinned without forcing an up-front Graph sign-in - keeping
+  the mailbox-first workflow intact.
+
 ## [1.3.1] - 2026-07-08
 
 ### Fixed
