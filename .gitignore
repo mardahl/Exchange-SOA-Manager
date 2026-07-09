@@ -3,6 +3,8 @@ SOA-Backups/
 SOA-Exports/
 SOA-Manager_*.log
 
+docs/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

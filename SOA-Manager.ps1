@@ -808,6 +808,7 @@ function Show-HelpModal {
         @($t.Row, '  Tab / Shift+Tab      switch tab            1-5  jump to tab'),
         @($t.Row, '  Up / Down            move cursor           PgUp / PgDn  page'),
         @($t.Row, '  Home / End           jump to first / last entry'),
+        @($t.CtxHi, '  Q  or  Ctrl+C        quit the application'),
         @($t.Row, ''),
         @($t.ModalTitle, 'Selection'),
         @($t.Row, '  Space                toggle selection on current row'),
@@ -841,7 +842,8 @@ function Show-HelpModal {
         @($t.Row, ''),
         @($t.ModalTitle, 'Misc'),
         @($t.Row, '  W                    disconnect EXO + Graph sessions'),
-        @($t.Row, '  ?                    this help          Q / Ctrl+C  quit'),
+        @($t.Row, '  ?                    this help'),
+        @($t.Row, '  Q  or  Ctrl+C        quit the application'),
         @($t.Row, ''),
         @($t.Muted, ("  Log file: " + $script:LogFile)),
         @($t.Muted, ("  Backups : " + $script:BackupDir)),
@@ -928,13 +930,21 @@ function Connect-ExoService {
     # first, Connect-MgGraph later fails with:
     #   "Method not found: ... WithLogging(Microsoft.IdentityModel.Abstractions.IIdentityLogger, Boolean)"
     # Importing Microsoft.Graph.Authentication BEFORE ExchangeOnlineManagement pins
-    # the newer assemblies, which both modules can use.
+    # the newer assemblies, which both modules can use. This has to happen even
+    # when the operator only needs Exchange: once EXO's older MSAL loads, a later
+    # Graph sign-in in the same session is already broken. Installing Graph up
+    # front keeps the user's workflow (mailbox -> group/contact) from dead-ending.
+    if (-not (Test-SoaModule -Name 'Microsoft.Graph.Authentication')) {
+        [void](Install-SoaModule -Name 'Microsoft.Graph.Authentication')
+    }
     if (Test-SoaModule -Name 'Microsoft.Graph.Authentication') {
         try {
             Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
         } catch {
             Write-SoaLog -Message ("Pre-import of Microsoft.Graph.Authentication failed ({0}); Graph sign-in may hit a known MSAL conflict." -f $_.Exception.Message) -Level WARN
         }
+    } else {
+        Write-SoaLog -Message 'Microsoft.Graph.Authentication is not available; a later Graph sign-in may hit a known MSAL conflict (Graph SDK issue #3394).' -Level WARN
     }
     Write-SoaLog -Message 'Connecting to Exchange Online...'
     $script:LastConnectError = $null
@@ -1216,16 +1226,30 @@ function Invoke-ExoBackgroundFetch {
     # process-wide static, so the worker runspace reuses the live connection
     # after importing the module. -Tick runs every poll; it may throw
     # OperationCanceledException (Esc), which stops the worker and rethrows.
-    param([string]$Command, [scriptblock]$Tick)
+    #
+    # Get-Mailbox is NOT exported by ExchangeOnlineManagement - Connect
+    # generates it into a tmpEXO_* module inside the connecting runspace, so
+    # the worker must import that module's .psm1 (-ProxyModulePath) to see it.
+    param([string]$Command, [scriptblock]$Tick, [string]$ProxyModulePath)
     $ps = [powershell]::Create()
-    [void]$ps.AddScript('Import-Module ExchangeOnlineManagement -ErrorAction Stop; ' + $Command)
+    $bootstrap = 'Import-Module ExchangeOnlineManagement -ErrorAction Stop; '
+    if ($ProxyModulePath) {
+        $bootstrap += 'Import-Module ''' + $ProxyModulePath + ''' -ErrorAction Stop; '
+    }
+    [void]$ps.AddScript($bootstrap + $Command)
     $handle = $ps.BeginInvoke()
     try {
         while (-not $handle.IsCompleted) {
             if ($Tick) { & $Tick }
             Start-Sleep -Milliseconds 150
         }
-        return ,$ps.EndInvoke($handle)
+        $out = $ps.EndInvoke($handle)
+        # Non-terminating worker errors (e.g. CommandNotFound for a script
+        # command) do NOT make EndInvoke throw - they land in the error
+        # stream and the result is silently empty. Surface them so the
+        # caller's fallback path actually runs.
+        if ($ps.Streams.Error.Count -gt 0) { throw $ps.Streams.Error[0].Exception }
+        return ,$out
     } catch [System.OperationCanceledException] {
         try { $ps.Stop() } catch { }
         throw
@@ -1291,8 +1315,15 @@ function Get-MailboxItems {
         # can cause timeouts or throttling in large tenants). Fetch runs in a
         # background runspace: EXO v3 buffers everything before returning, so
         # this keeps the main thread free for Esc-cancel and elapsed updates.
-        $cmd = 'Get-Mailbox -Filter "IsDirSynced -eq $true" -ResultSize Unlimited -ErrorAction Stop'
-        $raw = Invoke-ExoBackgroundFetch -Command $cmd -Tick $tick
+        # Filter is single-quoted so the worker passes a literal $true to
+        # Exchange instead of interpolating it to 'True' first.
+        $cmd = 'Get-Mailbox -Filter ''IsDirSynced -eq $true'' -ResultSize Unlimited -ErrorAction Stop'
+        # Get-Mailbox lives in the tmpEXO_* proxy module Connect generated in
+        # THIS runspace; hand its path to the worker so it can import it.
+        $proxy = Get-Module | Where-Object { $_.Name -like 'tmpEXO*' -or $_.Name -like 'tmp_*' } | Select-Object -First 1
+        $proxyPath = ''
+        if ($proxy) { $proxyPath = [string]$proxy.Path }
+        $raw = Invoke-ExoBackgroundFetch -Command $cmd -Tick $tick -ProxyModulePath $proxyPath
         foreach ($mb in $raw) { & $build $mb }
     } catch [System.OperationCanceledException] {
         throw
