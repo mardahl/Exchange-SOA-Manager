@@ -21,6 +21,8 @@ jobs:
           zip -r "${stage}.zip" "$stage"
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: Exchange-SOA-Manager-*.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" Exchange-SOA-Manager-*.zip --clobber \
+            || gh release create "$GITHUB_REF_NAME" Exchange-SOA-Manager-*.zip --generate-notes
