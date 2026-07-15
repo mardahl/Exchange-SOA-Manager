@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-07-15
+
+### Fixed
+
+- **MSAL conflict workaround rewritten - Exchange Online now signs in reliably.**
+  The v1.3.3/v1.3.4 approach of hand-loading Graph's MSAL assemblies via
+  `Assembly.LoadFrom` never worked across environments: the dependency
+  `Microsoft.IdentityModel.Abstractions` (v8.x) still failed to resolve
+  (`Could not load file or assembly 'Microsoft.IdentityModel.Abstractions,
+  Version=8.14.0.0'`) on PowerShell 7, and Windows PowerShell 5.1 looped the
+  interactive browser sign-in and hung. The tool now uses the documented,
+  reliable workaround: it runs a full `Connect-MgGraph` **before**
+  `Connect-ExchangeOnline`, so Graph's own module loader initialises MSAL with
+  its complete dependency closure and Exchange Online reuses it
+  ([msgraph-sdk-powershell #3394](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394)).
+
+### Changed
+
+- **Exchange Online now requires a Microsoft Graph sign-in first.** To avoid the
+  MSAL assembly clash, connecting to Exchange Online (Mailboxes / Organization)
+  now signs in to Microsoft Graph first. This replaces the previous
+  "mailbox-first, no up-front Graph login" behaviour.
+
 ## [1.3.4] - 2026-07-15
 
 ### Fixed
