@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-07-15
+
+### Fixed
+
+- **Exchange Online sign-in looped/failed after the v1.3.3 MSAL workaround.**
+  The `#3394` pre-load loaded only `Microsoft.Identity.Client.dll` (v4.82) but
+  not its required dependency `Microsoft.IdentityModel.Abstractions.dll` (v8.x) -
+  the assembly that owns the `WithLogging` / `IIdentityLogger` API at the heart
+  of the conflict. With the dependency unresolved, the first real MSAL call
+  failed: on PowerShell 7 with `Could not load file or assembly
+  'Microsoft.IdentityModel.Abstractions, Version=8.14.0.0'`, and on Windows
+  PowerShell 5.1 the interactive browser sign-in reloaded repeatedly and then
+  hung forever. The pre-load now loads the sibling
+  `Microsoft.IdentityModel.Abstractions.dll` (same edition folder) **before**
+  MSAL, so the dependency resolves and both Exchange Online and a later
+  `Connect-MgGraph` complete
+  ([msgraph-sdk-powershell #3394](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394)).
+
 ## [1.3.3] - 2026-07-09
 
 ### Fixed

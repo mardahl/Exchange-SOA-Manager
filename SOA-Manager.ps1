@@ -88,7 +88,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.3.3'
+$script:Version = '1.3.4'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -961,6 +961,26 @@ function Connect-ExoService {
                     Select-Object -First 1
             }
             if ($msal) {
+                # Microsoft.Identity.Client v4.8x depends on
+                # Microsoft.IdentityModel.Abstractions v8.x - the assembly that owns
+                # the IIdentityLogger / WithLogging API at the very heart of #3394.
+                # LoadFrom on Identity.Client alone does NOT bring its dependency into
+                # the process, so the first real MSAL call throws:
+                #   "Could not load file or assembly 'Microsoft.IdentityModel.Abstractions,
+                #    Version=8.x'. The system cannot find the file specified."
+                # They ship side by side in the Graph module folder, so pin the sibling
+                # FIRST (same edition folder) before loading MSAL itself.
+                $abst = Join-Path (Split-Path $msal.FullName -Parent) 'Microsoft.IdentityModel.Abstractions.dll'
+                if (Test-Path $abst) {
+                    try {
+                        [void][System.Reflection.Assembly]::LoadFrom($abst)
+                        Write-SoaLog -Message ("Pre-loaded MSAL dependency {0} (v{1})." -f (Split-Path $abst -Leaf), ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($abst).FileVersion)) -Level OK
+                    } catch {
+                        Write-SoaLog -Message ("Pre-load of Microsoft.IdentityModel.Abstractions failed ({0}); MSAL may not resolve its dependency." -f $_.Exception.Message) -Level WARN
+                    }
+                } else {
+                    Write-SoaLog -Message 'Could not locate Microsoft.IdentityModel.Abstractions.dll next to the Graph MSAL assembly; MSAL may fail to resolve its dependency.' -Level WARN
+                }
                 [void][System.Reflection.Assembly]::LoadFrom($msal.FullName)
                 Write-SoaLog -Message ("Pre-loaded Graph MSAL assembly {0} (v{1}) to avoid the known EXO/Graph conflict (issue #3394)." -f $msal.Name, $msal.VersionInfo.FileVersion) -Level OK
             } else {
