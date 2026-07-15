@@ -30,6 +30,9 @@
       * ExchangeOnlineManagement      (mailboxes + organization config)
       * Microsoft.Graph.Authentication (groups + contacts, lightweight REST)
 
+    Graph is run out-of-process to avoid MSAL assembly conflicts with
+    ExchangeOnlineManagement. See Connect-GraphService for details.
+
     Required roles / permissions:
       * Mailboxes / Org : Exchange Administrator (or Global Administrator)
       * Groups / Contacts: Hybrid Identity Administrator + admin consent for
@@ -106,6 +109,17 @@ $script:Conn = @{
     Graph        = $false
     ExoAccount   = ''
     GraphAccount = ''
+}
+
+# Out-of-process Graph worker state
+$script:GraphWorker = @{
+    Process    = $null
+    StdIn      = $null   # StreamWriter
+    StdOut     = $null   # StreamReader
+    StdErr     = $null   # StreamReader
+    LastError  = ''
+    WorkerPath = ''
+    Account    = ''
 }
 
 # Organization config state
@@ -922,29 +936,18 @@ function Connect-ExoService {
     if (-not (Test-SoaModule -Name 'ExchangeOnlineManagement')) {
         if (-not (Install-SoaModule -Name 'ExchangeOnlineManagement')) { return $false }
     }
-    # Workaround for https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3394:
-    # ExchangeOnlineManagement and Microsoft.Graph.Authentication bundle different
-    # versions of the MSAL assembly (Microsoft.Identity.Client). .NET loads an
-    # assembly by simple name only once per process, so whichever module authenticates
-    # FIRST pins its MSAL for the entire session.
+    # MSAL assembly conflict root cause:
+    # ExchangeOnlineManagement and Microsoft.Graph.Authentication ship different
+    # versions of Microsoft.Identity.Client.dll. .NET loads an assembly by
+    # simple name once per process, so whichever module authenticates first pins
+    # its MSAL and the other module may throw MissingMethodException.
+    # Prior workarounds (Graph-first, EXO-first, dummy credential warmup) all
+    # break under newer releases because the DLL signatures keep diverging.
     #
-    #   - EXO first  -> a later Connect-MgGraph dies with
-    #                   "Method not found ... WithLogging(...IIdentityLogger, Boolean)".
-    #   - Hand-loading Graph's newer MSAL DLL first -> EXO's interactive sign-in loops
-    #                   and hangs, because a lone Assembly.LoadFrom never brings MSAL's
-    #                   own dependency (Microsoft.IdentityModel.Abstractions v8.x) along,
-    #                   so the first real token call fails with
-    #                   "Could not load file or assembly 'Microsoft.IdentityModel.Abstractions'".
-    #
-    # The only reliable fix is to let Graph's OWN module loader initialise MSAL first:
-    # run a full Connect-MgGraph before Connect-ExchangeOnline. Graph then loads the
-    # complete, matching MSAL dependency closure and EXO happily reuses it. This trades
-    # the old "no up-front Graph login" behaviour for a working both-services session.
-    # See https://office365itpros.com/2025/09/24/assembly-clash-microsoft-365-ps/.
-    if (-not (Connect-GraphService)) {
-        Write-SoaLog -Message 'Microsoft Graph sign-in must complete before Exchange Online to avoid the MSAL assembly conflict (issue #3394); Exchange Online was not contacted.' -Level ERROR
-        return $false
-    }
+    # Fix: leave Graph completely out of this process. Microsoft Graph calls run
+    # in a dedicated child PowerShell process (Start-GraphWorker). EXO owns the
+    # parent process MSAL context; the child process owns Graph's MSAL context.
+    # They communicate over stdin/stdout JSON envelopes.
     Write-SoaLog -Message 'Connecting to Exchange Online...'
     $script:LastConnectError = $null
     Invoke-OnMainBuffer -Action {
@@ -977,6 +980,7 @@ function Connect-ExoService {
     return $true
 }
 
+
 function Connect-GraphService {
     if ($script:Conn.Graph) { return $true }
     if ($script:DemoMode) {
@@ -988,7 +992,7 @@ function Connect-GraphService {
     if (-not (Test-SoaModule -Name 'Microsoft.Graph.Authentication')) {
         if (-not (Install-SoaModule -Name 'Microsoft.Graph.Authentication')) { return $false }
     }
-    Write-SoaLog -Message 'Connecting to Microsoft Graph...'
+    Write-SoaLog -Message 'Starting out-of-process Microsoft Graph worker...'
     $script:LastConnectError = $null
     $scopes = @(
         'Group.Read.All'
@@ -998,6 +1002,10 @@ function Connect-GraphService {
         'OrgContact.Read.All'
         'Contacts-OnPremisesSyncBehavior.ReadWrite.All'
     )
+    # The interactive browser sign-in must happen in the child process. We
+    # leave the TUI so the device-code / browser prompt is visible on the main
+    # console, then launch the worker.
+    $started = $false
     Invoke-OnMainBuffer -Action {
         Write-Host ''
         Write-Host 'Connecting to Microsoft Graph - complete sign-in in your browser...' -ForegroundColor Cyan
@@ -1006,37 +1014,15 @@ function Connect-GraphService {
         Write-Host 'Requested scopes:' -ForegroundColor DarkGray
         foreach ($s in $scopes) { Write-Host "  $s" -ForegroundColor DarkGray }
         try {
-            Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-            Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
+            $started = Start-GraphWorker -Scopes $scopes
         } catch {
             $script:LastConnectError = $_.Exception.Message
-            Write-Host "Graph connection failed: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Graph worker failed: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
     }
-    $ctx = $null
-    try { $ctx = Get-MgContext } catch { $ctx = $null }
-    if ($null -eq $ctx) {
-        Write-SoaLog -Message 'Graph connection failed or was cancelled.' -Level ERROR
-        if ([string]$script:LastConnectError -like '*Method not found*WithLogging*') {
-            # Known MSAL assembly conflict between ExchangeOnlineManagement and
-            # Microsoft.Graph.Authentication; see msgraph-sdk-powershell issue #3394.
-            # Once the wrong DLL is loaded, only a fresh process fixes it.
-            Write-SoaLog -Message 'Known module conflict detected (Graph SDK issue #3394): Exchange Online loaded an incompatible MSAL assembly first.' -Level ERROR
-            Show-MsgModal -Title 'Connection failed' -Lines @(
-                'Could not establish a Microsoft Graph session.',
-                '',
-                'Cause: a known conflict between the ExchangeOnlineManagement and',
-                'Microsoft.Graph.Authentication modules (Graph SDK issue #3394).',
-                'Exchange Online loaded an older MSAL assembly into this session,',
-                'which Microsoft Graph cannot use.',
-                '',
-                'Fix: restart this tool (a fresh PowerShell process) and try again.',
-                'If the error persists, update both modules:',
-                '  Update-Module ExchangeOnlineManagement, Microsoft.Graph.Authentication'
-            ) -Kind Error
-            return $false
-        }
+    if (-not $started) {
+        Write-SoaLog -Message 'Graph worker connection failed or was cancelled.' -Level ERROR
         Show-MsgModal -Title 'Connection failed' -Lines @(
             'Could not establish a Microsoft Graph session.',
             '',
@@ -1045,10 +1031,152 @@ function Connect-GraphService {
         return $false
     }
     $script:Conn.Graph = $true
-    $acct = Get-PropSafe $ctx 'Account'
-    if ($acct) { $script:Conn.GraphAccount = [string]$acct }
+    $script:Conn.GraphAccount = $script:GraphWorker.Account
     Write-SoaLog -Message ("Connected to Microsoft Graph as {0}." -f $script:Conn.GraphAccount) -Level OK
     return $true
+}
+
+function Stop-GraphWorker {
+    # Idempotent cleanup of the out-of-process Graph worker.
+    $gw = $script:GraphWorker
+    if ($gw.StdIn) {
+        try { $gw.StdIn.Close() } catch { }
+        try { $gw.StdIn.Dispose() } catch { }
+        $gw.StdIn = $null
+    }
+    if ($gw.StdOut) {
+        try { $gw.StdOut.Close() } catch { }
+        try { $gw.StdOut.Dispose() } catch { }
+        $gw.StdOut = $null
+    }
+    if ($gw.StdErr) {
+        try { $gw.StdErr.Close() } catch { }
+        try { $gw.StdErr.Dispose() } catch { }
+        $gw.StdErr = $null
+    }
+    if ($gw.Process) {
+        try {
+            if (-not $gw.Process.HasExited) {
+                $gw.Process.Kill()
+                $gw.Process.WaitForExit(2000) | Out-Null
+            }
+        } catch { }
+        try { $gw.Process.Dispose() } catch { }
+        $gw.Process = $null
+    }
+    if ($gw.WorkerPath) {
+        try { Remove-Item -LiteralPath $gw.WorkerPath -ErrorAction SilentlyContinue } catch { }
+        $gw.WorkerPath = $null
+    }
+    $gw.LastError = ''
+}
+
+function Start-GraphWorker {
+    param([string[]]$Scopes)
+    Stop-GraphWorker
+    $gw = $script:GraphWorker
+    # Write the worker to a temporary script file. A child file avoids
+    # Base64 length limits and lets us pass scopes via a normal parameter.
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('SOA-GraphWorker_' + [Guid]::NewGuid().ToString('n') + '.ps1')
+    @'
+param([string]$ScopeList)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+$scopes = $ScopeList -split '\|'
+Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
+$ctx = Get-MgContext
+$acct = ''
+if ($ctx) { $acct = [string]$ctx.Account }
+@{ type='ready'; account=$acct } | ConvertTo-Json -Compress
+$in = [Console]::In
+while ($null -ne ($line = $in.ReadLine())) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $job = $line | ConvertFrom-Json
+    try {
+        switch ($job.method) {
+            'GET' {
+                $hdr = @{ }
+                if ($job.headers) { foreach ($h in $job.headers.PSObject.Properties) { $hdr[$h.Name] = $h.Value } }
+                $resp = Invoke-MgGraphRequest -Method GET -Uri $job.uri -Headers $hdr -OutputType PSObject -ErrorAction Stop
+                @{ type='ok'; id=$job.id; value=$resp } | ConvertTo-Json -Depth 10 -Compress
+            }
+            'PATCH' {
+                [void](Invoke-MgGraphRequest -Method PATCH -Uri $job.uri -Body $job.body -ContentType 'application/json' -OutputType PSObject -ErrorAction Stop)
+                @{ type='ok'; id=$job.id } | ConvertTo-Json -Compress
+            }
+            'POST' {
+                $body = $job.body
+                $ct = $job.contentType
+                if (-not $ct) { $ct = 'application/json' }
+                $resp = Invoke-MgGraphRequest -Method POST -Uri $job.uri -Body $body -ContentType $ct -OutputType PSObject -ErrorAction Stop
+                @{ type='ok'; id=$job.id; value=$resp } | ConvertTo-Json -Depth 10 -Compress
+            }
+            default { throw "Unknown method $($job.method)" }
+        }
+    } catch {
+        $msg = $_.Exception.Message
+        if ($_.Exception -is [System.Management.Automation.MethodInvocationException] -and $_.Exception.InnerException) {
+            $msg = $_.Exception.InnerException.Message
+        }
+        @{ type='err'; id=$job.id; message=$msg } | ConvertTo-Json -Compress
+    }
+}
+'@ | Set-Content -LiteralPath $tmp -Encoding UTF8
+    $gw.WorkerPath = $tmp
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = if ($PSVersionTable.PSEdition -eq 'Core' -and (Get-Command 'pwsh' -ErrorAction SilentlyContinue)) { 'pwsh' } else { 'powershell' }
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$tmp`" -ScopeList `"$($Scopes -join '|')`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $gw.Process = $proc
+    $gw.StdIn = $proc.StandardInput
+    $gw.StdOut = $proc.StandardOutput
+    $gw.StdErr = $proc.StandardError
+    $gw.Account = ''
+    # Read the ready line (or error). The sign-in is synchronous in the child,
+    # so this blocks until the user completes auth in the browser.
+    $ready = $gw.StdOut.ReadLine()
+    if (-not $ready) {
+        Stop-GraphWorker
+        throw 'Graph worker exited before signalling readiness.'
+    }
+    $readyObj = $ready | ConvertFrom-Json
+    if ($readyObj.type -ne 'ready') {
+        $err = $readyObj.message
+        if (-not $err) { $err = 'Graph worker failed during authentication.' }
+        Stop-GraphWorker
+        throw $err
+    }
+    $gw.Account = [string]$readyObj.account
+    return $true
+}
+
+function Invoke-GraphWorker {
+    param([hashtable]$Job)
+    $gw = $script:GraphWorker
+    if (-not $gw.Process -or $gw.Process.HasExited) {
+        throw 'Graph worker is not running. Reconnect to Microsoft Graph first.'
+    }
+    if (-not $Job.ContainsKey('id')) { $Job['id'] = [Guid]::NewGuid().ToString('n') }
+    $line = $Job | ConvertTo-Json -Depth 5 -Compress
+    $gw.StdIn.WriteLine($line)
+    $resp = $gw.StdOut.ReadLine()
+    if (-not $resp) {
+        $stderr = ''
+        try { $stderr = $gw.StdErr.ReadToEnd() } catch { }
+        Stop-GraphWorker
+        throw ('Graph worker closed the response stream. {0}' -f $stderr)
+    }
+    $obj = $resp | ConvertFrom-Json
+    if ($obj.type -eq 'err') {
+        throw [string]$obj.message
+    }
+    return $obj.value
 }
 
 function Disconnect-AllServices {
@@ -1058,7 +1186,7 @@ function Disconnect-AllServices {
         Write-SoaLog -Message 'Disconnected from Exchange Online.'
     }
     if ($script:Conn.Graph) {
-        try { [void](Disconnect-MgGraph -ErrorAction SilentlyContinue) } catch { }
+        Stop-GraphWorker
         Write-SoaLog -Message 'Disconnected from Microsoft Graph.'
     }
     $script:Conn.Exo = $false; $script:Conn.Graph = $false
@@ -1080,7 +1208,7 @@ function Invoke-GraphGetAll {
     $out = New-Object System.Collections.ArrayList
     $next = $Uri
     while ($next) {
-        $resp = Invoke-MgGraphRequest -Method GET -Uri $next -Headers $headers -OutputType PSObject -ErrorAction Stop
+        $resp = Invoke-GraphWorker -Job @{ method='GET'; uri=$next; headers=$headers }
         $val = Get-PropSafe $resp 'value'
         if ($null -ne $val) { foreach ($v in @($val)) { [void]$out.Add($v) } }
         $next = Get-PropSafe $resp '@odata.nextLink'
@@ -1111,7 +1239,7 @@ function Get-SyncBehaviorMap {
             $n++
         }
         $body = @{ requests = $requests.ToArray() } | ConvertTo-Json -Depth 4
-        $resp = Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/$batch' -Body $body -ContentType 'application/json' -OutputType PSObject -ErrorAction Stop
+        $resp = Invoke-GraphWorker -Job @{ method='POST'; uri='https://graph.microsoft.com/v1.0/$batch'; body=$body; contentType='application/json' }
         $responses = Get-PropSafe $resp 'responses'
         if ($null -eq $responses) { continue }
         foreach ($r in @($responses)) {
@@ -1582,7 +1710,7 @@ function Convert-GraphSoa {
     try {
         $uri = ('https://graph.microsoft.com/v1.0/' + $resource + '/' + $Item.Id + '/onPremisesSyncBehavior')
         $body = @{ isCloudManaged = $ToCloud } | ConvertTo-Json
-        [void](Invoke-MgGraphRequest -Method PATCH -Uri $uri -Body $body -ContentType 'application/json' -ErrorAction Stop)
+        [void](Invoke-GraphWorker -Job @{ method='PATCH'; uri=$uri; body=$body; contentType='application/json' })
         return @{ Ok=$true; Msg='converted' }
     } catch {
         return @{ Ok=$false; Msg=$_.Exception.Message }
