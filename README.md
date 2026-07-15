@@ -65,6 +65,8 @@ Microsoft now supports moving the SOA for Exchange attributes (and whole directo
 
 ## Quick start
 
+Download the zip from [Releases](https://github.com/mardahl/Exchange-SOA-Manager/releases/latest), extract, then double-click **`Launch-SOA-Manager.bat`** - it unblocks the files (removes the Mark of the Web) and starts the tool. Or run it yourself:
+
 ```powershell
 # Explore the UI with fake data (no tenant access, nothing installed)
 .\SOA-Manager.ps1 -Demo
