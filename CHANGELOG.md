@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-07-15
+
+### Fixed
+
+- **Microsoft Graph is now isolated in a child PowerShell process.**
+  `ExchangeOnlineManagement` and `Microsoft.Graph.Authentication` ship
+  incompatible versions of `Microsoft.Identity.Client.dll`. The v1.3.5
+  workaround of signing into Graph before Exchange Online started failing again
+  on newer module releases with `MissingMethodException` on
+  `BrokerExtension.WithBrowser`. The tool now keeps Exchange Online as the only
+  MSAL consumer in the main process and runs all Graph authentication and REST
+  calls in a dedicated child `pwsh`/`powershell` process that communicates over
+  stdin/stdout JSON envelopes
+  ([microsoftgraph/msgraph-sdk-powershell #3331](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/3331)).
+
 ## [1.3.6] - 2026-07-15
 
 ### Added
