@@ -1005,7 +1005,7 @@ function Connect-GraphService {
     # The interactive browser sign-in must happen in the child process. We
     # leave the TUI so the device-code / browser prompt is visible on the main
     # console, then launch the worker.
-    $started = $false
+    $script:Conn.Graph = $false
     Invoke-OnMainBuffer -Action {
         Write-Host ''
         Write-Host 'Connecting to Microsoft Graph - complete sign-in in your browser...' -ForegroundColor Cyan
@@ -1015,13 +1015,14 @@ function Connect-GraphService {
         foreach ($s in $scopes) { Write-Host "  $s" -ForegroundColor DarkGray }
         try {
             $started = Start-GraphWorker -Scopes $scopes
+            if ($started) { $script:Conn.Graph = $true }
         } catch {
             $script:LastConnectError = $_.Exception.Message
             Write-Host "Graph worker failed: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
     }
-    if (-not $started) {
+    if (-not $script:Conn.Graph) {
         Write-SoaLog -Message 'Graph worker connection failed or was cancelled.' -Level ERROR
         Show-MsgModal -Title 'Connection failed' -Lines @(
             'Could not establish a Microsoft Graph session.',
@@ -1030,7 +1031,6 @@ function Connect-GraphService {
         ) -Kind Error
         return $false
     }
-    $script:Conn.Graph = $true
     $script:Conn.GraphAccount = $script:GraphWorker.Account
     Write-SoaLog -Message ("Connected to Microsoft Graph as {0}." -f $script:Conn.GraphAccount) -Level OK
     return $true
