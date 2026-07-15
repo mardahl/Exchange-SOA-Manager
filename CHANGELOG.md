@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-07-15
+
+### Added
+
+- **Packaged release zip and launcher.** Releases now ship a curated
+  `Exchange-SOA-Manager-<tag>.zip` (script, `Launch-SOA-Manager.bat`, README,
+  LICENSE, CHANGELOG) instead of GitHub's raw source archive.
+  `Launch-SOA-Manager.bat` removes the Mark of the Web from the extracted
+  files (`Unblock-File`) and starts the script, so there's no PowerShell
+  execution-policy prompt after downloading and extracting the zip.
+
 ## [1.3.5] - 2026-07-15
 
 ### Fixed
@@ -227,7 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.6...HEAD
+[1.3.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.5...v1.3.6
 [1.3.1]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.2...v1.2.3
