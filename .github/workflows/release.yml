@@ -24,5 +24,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > notes.md
           gh release upload "$GITHUB_REF_NAME" Exchange-SOA-Manager-*.zip --clobber \
-            || gh release create "$GITHUB_REF_NAME" Exchange-SOA-Manager-*.zip --generate-notes
+            || gh release create "$GITHUB_REF_NAME" Exchange-SOA-Manager-*.zip --notes-file notes.md
