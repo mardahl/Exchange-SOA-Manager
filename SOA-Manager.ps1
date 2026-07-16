@@ -180,6 +180,7 @@ if ($Ascii) {
         Up='^'; Down='v'; Ell='..'
         ChkOn='[x]'; ChkOff='[ ]'
         Arrow='->'
+        AuditOk='OK'; AuditWarn='!'
     }
 } else {
     $script:G = @{
@@ -189,6 +190,7 @@ if ($Ascii) {
         Up=([char]0x2191); Down=([char]0x2193); Ell=([char]0x2026)
         ChkOn=('[' + [char]0x25A0 + ']'); ChkOff='[ ]'
         Arrow=([char]0x2192)
+        AuditOk=([char]0x2713); AuditWarn=([char]0x25B2)
     }
 }
 
@@ -367,6 +369,19 @@ function Get-SoaBadge {
         'OnPrem'  { return ($t.OnPrem  + (Get-PadCell ("$($g.Dot) On-prem") $Width)) }
         'Pending' { return ($t.Pending + (Get-PadCell ("$($g.Half) Pending") $Width)) }
         default   { return ($t.Muted   + (Get-PadCell '?' $Width)) }
+    }
+}
+
+function Get-AuditGlyph {
+    param($Item, [int]$Width = 4)
+    $t = $script:T; $g = $script:G
+    $rec = Get-PropSafe $Item 'Audit'
+    if ($null -eq $rec) { return ($t.Muted + (Get-PadCell '' $Width)) }
+    $state = [string](Get-PropSafe $rec 'State')
+    switch ($state) {
+        'Yellow' { return ($t.Warn + (Get-PadCell ([string]$g.AuditWarn) $Width)) }
+        'Green'  { return ($t.Good + (Get-PadCell ([string]$g.AuditOk) $Width)) }
+        default  { return ($t.Muted + (Get-PadCell '?' $Width)) }
     }
 }
 
@@ -841,6 +856,7 @@ function Show-HelpModal {
         @($t.ModalTitle, 'Conversions'),
         @($t.Row, '  C                    convert selection to CLOUD managed SOA'),
         @($t.Row, '  O                    convert selection back to ON-PREM managed SOA'),
+        @($t.Row, '  V                    audit selected groups for cloud-conversion risk (Windows only)'),
         @($t.Row, '                       (attribute backup JSON is written first;'),
         @($t.Row, '                       group rollbacks run a cloud-member check)'),
         @($t.Row, ''),
@@ -2488,13 +2504,13 @@ function Add-TabBar {
 
 function Get-ListLayout {
     param([int]$W)
-    # Columns: ' ' chk(3) ' ' name email '  ' detail(13) '  ' soa(10)
-    $fixed = 1 + 3 + 1 + 2 + 13 + 2 + 10
+    # Columns: ' ' chk(3) ' ' name email '  ' detail(13) '  ' soa(10) '  ' audit(4)
+    $fixed = 1 + 3 + 1 + 2 + 13 + 2 + 10 + 2 + 4
     $flex = $W - $fixed - 1
     if ($flex -lt 20) { $flex = 20 }
     $nameW = [int]($flex * 0.42)
     $emailW = $flex - $nameW - 2
-    return @{ Name=$nameW; Email=$emailW; Detail=13; Soa=10 }
+    return @{ Name=$nameW; Email=$emailW; Detail=13; Soa=10; Chk=4 }
 }
 
 function Add-ListView {
@@ -2553,7 +2569,7 @@ function Add-ListView {
     Add-FrameLine -Sb $Sb -Row 3 -Content ($t.Ctx + $ctx)
 
     $col = Get-ListLayout -W $W
-    $head = ' ' + (Get-PadCell 'sel' 3) + ' ' + (Get-PadCell 'Name' $col.Name) + '  ' + (Get-PadCell 'Email' $col.Email) + '  ' + (Get-PadCell 'Type' $col.Detail) + '  ' + (Get-PadCell 'SOA' $col.Soa)
+    $head = ' ' + (Get-PadCell 'sel' 3) + ' ' + (Get-PadCell 'Name' $col.Name) + '  ' + (Get-PadCell 'Email' $col.Email) + '  ' + (Get-PadCell 'Type' $col.Detail) + '  ' + (Get-PadCell 'SOA' $col.Soa) + '  ' + (Get-PadCell 'Chk' $col.Chk)
     Add-FrameLine -Sb $Sb -Row 4 -Content ($t.ColHead + $head)
 
     $top = 5; $bottom = $H - 1
@@ -2592,6 +2608,7 @@ function Add-ListView {
         else { $line += $t.RowDim + (Get-PadCell $item.Email $col.Email) + $t.Row }
         $line += '  ' + (Get-PadCell $item.Detail $col.Detail) + '  '
         $line += (Get-SoaBadge -Soa $item.Soa -Width $col.Soa)
+        $line += '  ' + (Get-AuditGlyph -Item $item -Width $col.Chk)
         Add-FrameLine -Sb $Sb -Row $row -Content $line
     }
 }
@@ -2705,7 +2722,7 @@ function Get-TabHints {
             return @(
                 @('Spc','select'), @('A','all'), @('N','none'),
                 @('/','find'), @('F','filter'), @('S','sort'),
-                @('C','to cloud'), @('O','to on-prem'),
+                @('C','to cloud'), @('O','to on-prem'), @('V','audit'),
                 @('E','export'), @('I','import'), @('R','reload'),
                 @('?','help'), @('Q','quit')
             )
