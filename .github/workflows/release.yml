@@ -18,6 +18,7 @@ jobs:
           stage="Exchange-SOA-Manager-${GITHUB_REF_NAME}"
           mkdir "$stage"
           cp SOA-Manager.ps1 Launch-SOA-Manager.bat README.md LICENSE CHANGELOG.md "$stage/"
+          cp -r src "$stage/"
           zip -r "${stage}.zip" "$stage"
 
       - name: Attach to release
