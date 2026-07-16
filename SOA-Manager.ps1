@@ -2001,6 +2001,67 @@ function Export-GroupAudit {
     return $file
 }
 
+function Invoke-GroupAudit {
+    # On-demand forward-conversion audit for selected (else visible) groups.
+    param($Tab)
+    if ($Tab['Noun'] -ne 'groups') {
+        Show-MsgModal -Title 'Forward audit' -Lines @('The forward audit runs on the Groups tab only.') -Kind Info
+        return
+    }
+    $targets = @($Tab['Items'] | Where-Object { $_.Selected })
+    if ($targets.Count -eq 0) { $targets = @($Tab['View']) }
+    if ($targets.Count -eq 0) {
+        Show-MsgModal -Title 'Forward audit' -Lines @('There are no groups to audit.') -Kind Warn
+        return
+    }
+
+    $pre = Test-AuditPrerequisite
+    if (-not $pre.Ok) {
+        Show-MsgModal -Title 'Forward audit unavailable' -Lines @($pre.Reason) -Kind Info
+        return
+    }
+
+    Write-SoaLog -Message ("Forward audit starting for {0} group(s)..." -f $targets.Count)
+    $findings = New-Object System.Collections.ArrayList
+    $flagged = 0
+    $idx = 0
+    foreach ($g in $targets) {
+        Write-Screen
+        Write-ProgressModal -Title 'Forward audit' -Done $idx -Total $targets.Count -Label $g.Name -Ok $flagged -Failed 0
+        $rec = $null
+        try {
+            $rec = Invoke-GroupForwardAudit -Group $g
+        } catch {
+            Write-SoaLog -Message ("Audit failed for group '{0}': {1}" -f $g.Name, $_.Exception.Message) -Level WARN
+            $rec = [pscustomobject]@{ GroupId = [string]$g.Id; State = 'Green'; NestedGroups = @(); DroppedMembers = @(); Error = $_.Exception.Message }
+        }
+        $g | Add-Member -NotePropertyName Audit -NotePropertyValue $rec -Force
+        if ([string]$rec.State -eq 'Yellow') {
+            $flagged++
+            [void]$findings.Add([pscustomobject]@{ Group = $g; Record = $rec })
+        }
+        $idx++
+    }
+    $script:UI.Dirty = $true
+
+    $csv = $null
+    if ($findings.Count -gt 0) { $csv = Export-GroupAudit -Findings $findings.ToArray() }
+
+    Write-SoaLog -Message ("Forward audit complete: {0} of {1} group(s) flagged." -f $flagged, $targets.Count)
+    if ($flagged -eq 0) {
+        Show-MsgModal -Title 'Forward audit complete' -Lines @(
+            ("Audited {0} group(s). All clear - no nested groups or dropped members." -f $targets.Count)
+        )
+    } else {
+        $lines = New-Object System.Collections.ArrayList
+        [void]$lines.Add(("{0} of {1} group(s) flagged (nested groups or members that would be dropped)." -f $flagged, $targets.Count))
+        [void]$lines.Add('')
+        [void]$lines.Add('Findings written to:')
+        [void]$lines.Add(@($script:T.CtxHi, [string]$csv))
+        Show-MsgModal -Title 'Forward audit complete' -Lines $lines.ToArray() -Kind Warn
+    }
+}
+
 function Import-SelectionFile {
     param($Tab)
     $path = Show-InputModal -Title 'Bulk import' -Prompt 'Path to a CSV (Identity/UPN/Email/DisplayName column) or TXT (one identity per line). Matching entries get selected.' -Default ''
@@ -2826,6 +2887,7 @@ function Invoke-ListKey {
         'I' { Import-SelectionFile -Tab $Tab; Update-TabView -Tab $Tab; return }
         'C' { Invoke-SoaConversion -Tab $Tab -ToCloud $true; return }
         'O' { Invoke-SoaConversion -Tab $Tab -ToCloud $false; return }
+        'V' { Invoke-GroupAudit -Tab $Tab; return }
     }
 }
 
