@@ -53,6 +53,7 @@ Microsoft now supports moving the SOA for Exchange attributes (and whole directo
 - **Safety first**
   - JSON **attribute backup** written before every conversion (proxy addresses, custom attributes, forwarding, moderation, and more for mailboxes; full directory object for groups/contacts)
   - **Group rollback safety check**: detects cloud-only members that would be lost when sync takes over again, per Microsoft guidance
+  - **Group forward audit** (`V`): before converting groups to cloud, recursively checks on-premises AD membership and flags nested groups (which stay on-prem) and members outside sync scope (which get dropped); full findings exported to CSV
   - Typed confirmation (`ROLLBACK` / `ENABLE` / `DISABLE`) for hazardous operations
   - Tenant-wide changes show Microsoft's GAL warning before proceeding
 - **Batch operations** with live progress, per-item results, and failed items kept selected for retry
@@ -93,6 +94,7 @@ Download the zip from [Releases](https://github.com/mardahl/Exchange-SOA-Manager
 | `S` / `D` | Cycle sort column / flip direction |
 | `C` | Convert selection to **cloud-managed** SOA |
 | `O` | Convert selection back to **on-prem-managed** SOA |
+| `V` | **Forward audit** selected groups: flag nested groups + members that would be dropped (Windows + RSAT only) |
 | `E` / `I` | Export view to CSV / import CSV-TXT selection |
 | `R` | Reload from the service |
 | `Esc` | Cancel a load in progress |
@@ -105,6 +107,7 @@ Download the zip from [Releases](https://github.com/mardahl/Exchange-SOA-Manager
 
 - [`ExchangeOnlineManagement`](https://www.powershellgallery.com/packages/ExchangeOnlineManagement) - mailboxes + organization config
 - [`Microsoft.Graph.Authentication`](https://www.powershellgallery.com/packages/Microsoft.Graph.Authentication) - groups + contacts (lightweight; the full Graph SDK is **not** required)
+- [`ActiveDirectory` (RSAT)](https://learn.microsoft.com/troubleshoot/windows-server/system-management-components/remote-server-administration-tools) - **Windows only**, required for the group forward audit (`V`); offered for install on demand
 
 ### Roles & permissions
 

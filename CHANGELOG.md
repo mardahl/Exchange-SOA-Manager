@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Group forward-conversion audit (`V` on the Groups tab): recursively diffs on-premises AD group membership against Microsoft Entra to flag nested groups and members that would be dropped when converting SOA to cloud. Green/yellow indicator in a new `Chk` column; full findings written to `SOA-Exports/GroupAudit_<timestamp>.csv`. Windows-only (uses the RSAT ActiveDirectory module, offered for install on demand).
+
 ## [1.3.8] - 2026-07-16
 
 ### Fixed
