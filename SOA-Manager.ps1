@@ -180,7 +180,7 @@ if ($Ascii) {
         Up='^'; Down='v'; Ell='..'
         ChkOn='[x]'; ChkOff='[ ]'
         Arrow='->'
-        AuditOk='OK'; AuditWarn='!'
+        AuditOk='OK'; AuditWarn='!'; AuditError='X'
     }
 } else {
     $script:G = @{
@@ -190,7 +190,7 @@ if ($Ascii) {
         Up=([char]0x2191); Down=([char]0x2193); Ell=([char]0x2026)
         ChkOn=('[' + [char]0x25A0 + ']'); ChkOff='[ ]'
         Arrow=([char]0x2192)
-        AuditOk=([char]0x2713); AuditWarn=([char]0x25B2)
+        AuditOk=([char]0x2713); AuditWarn=([char]0x25B2); AuditError=([char]0x2716)
     }
 }
 
@@ -381,6 +381,7 @@ function Get-AuditGlyph {
     switch ($state) {
         'Yellow' { return ($t.Warn + (Get-PadCell ([string]$g.AuditWarn) $Width)) }
         'Green'  { return ($t.Good + (Get-PadCell ([string]$g.AuditOk) $Width)) }
+        'Error'  { return ($t.Danger + (Get-PadCell ([string]$g.AuditError) $Width)) }
         default  { return ($t.Muted + (Get-PadCell '?' $Width)) }
     }
 }
@@ -1835,6 +1836,11 @@ function Get-AdMemberTree {
     # structure (does NOT use Get-ADGroupMember -Recursive, which flattens it).
     param([string]$RootSid)
     $visited = New-Object 'System.Collections.Generic.HashSet[string]'
+    # Separate from $visited: $visited guards re-traversal of a group's children
+    # (cycle prevention). $recordedSids dedups *reported* nested groups/leaves,
+    # since the same SID can be reached via two different parent paths (diamond
+    # membership) without ever revisiting an already-traversed group.
+    $recordedSids = New-Object 'System.Collections.Generic.HashSet[string]'
     $nested  = New-Object System.Collections.ArrayList
     $leaves  = New-Object System.Collections.ArrayList
     $stack   = New-Object System.Collections.Stack
@@ -1850,26 +1856,32 @@ function Get-AdMemberTree {
         $sid = ''
         if ($o.objectSid) { $sid = [string]$o.objectSid.Value }
         if ([string]$o.objectClass -eq 'group') {
-            [void]$nested.Add([pscustomobject]@{
-                Name  = [string]$o.displayName
-                DN    = [string]$o.DistinguishedName
-                Sid   = $sid
-                Class = 'group'
-            })
+            if (-not $sid -or -not $recordedSids.Contains($sid)) {
+                if ($sid) { [void]$recordedSids.Add($sid) }
+                [void]$nested.Add([pscustomobject]@{
+                    Name  = [string]$o.displayName
+                    DN    = [string]$o.DistinguishedName
+                    Sid   = $sid
+                    Class = 'group'
+                })
+            }
             if ($sid -and -not $visited.Contains($sid)) {
                 [void]$visited.Add($sid)
                 $child = Get-ADGroup -Identity $dn -Properties member -ErrorAction SilentlyContinue
                 if ($child) { foreach ($m in @($child.member)) { $stack.Push([string]$m) } }
             }
         } else {
-            $nm = [string]$o.displayName
-            if ([string]::IsNullOrEmpty($nm)) { $nm = [string]$o.sAMAccountName }
-            [void]$leaves.Add([pscustomobject]@{
-                Name  = $nm
-                DN    = [string]$o.DistinguishedName
-                Sid   = $sid
-                Class = [string]$o.objectClass
-            })
+            if (-not $sid -or -not $recordedSids.Contains($sid)) {
+                if ($sid) { [void]$recordedSids.Add($sid) }
+                $nm = [string]$o.displayName
+                if ([string]::IsNullOrEmpty($nm)) { $nm = [string]$o.sAMAccountName }
+                [void]$leaves.Add([pscustomobject]@{
+                    Name  = $nm
+                    DN    = [string]$o.DistinguishedName
+                    Sid   = $sid
+                    Class = [string]$o.objectClass
+                })
+            }
         }
     }
     return [pscustomobject]@{ Nested = $nested.ToArray(); Leaves = $leaves.ToArray() }
@@ -1902,6 +1914,9 @@ function Invoke-GroupForwardAudit {
                 })
             }
         }
+        # State contract: 'Green' = verified clean, 'Yellow' = findings present.
+        # ('Error' is assigned by the caller's catch block on a thrown exception -
+        # never returned from here, since this function's own audit succeeded.)
         $state = 'Green'
         if ($nested.Count -gt 0 -or $dropped.Count -gt 0) { $state = 'Yellow' }
         return [pscustomobject]@{
@@ -1938,6 +1953,9 @@ function Invoke-GroupForwardAudit {
         }
     }
 
+    # State contract: 'Green' = verified clean, 'Yellow' = findings present.
+    # ('Error' is assigned by the caller's catch block on a thrown exception -
+    # never returned from here, since this function's own audit succeeded.)
     $state = 'Green'
     if (@($tree.Nested).Count -gt 0 -or $dropped.Count -gt 0) { $state = 'Yellow' }
     return [pscustomobject]@{
@@ -1988,6 +2006,18 @@ function Export-GroupAudit {
     foreach ($f in @($Findings)) {
         $g   = $f.Group
         $rec = $f.Record
+        if ([string]$rec.State -eq 'Error') {
+            [void]$rows.Add([pscustomobject]@{
+                GroupName   = [string]$g.Name
+                GroupId     = [string]$g.Id
+                FindingType = 'AuditError'
+                MemberName  = ''
+                MemberSid   = ''
+                MemberClass = ''
+                Reason      = [string]$rec.Error
+            })
+            continue
+        }
         foreach ($ng in @($rec.NestedGroups)) {
             [void]$rows.Add([pscustomobject]@{
                 GroupName   = [string]$g.Name
@@ -2049,10 +2079,10 @@ function Invoke-GroupAudit {
             $rec = Invoke-GroupForwardAudit -Group $g
         } catch {
             Write-SoaLog -Message ("Audit failed for group '{0}': {1}" -f $g.Name, $_.Exception.Message) -Level WARN
-            $rec = [pscustomobject]@{ GroupId = [string]$g.Id; State = 'Green'; NestedGroups = @(); DroppedMembers = @(); Error = $_.Exception.Message }
+            $rec = [pscustomobject]@{ GroupId = [string]$g.Id; State = 'Error'; NestedGroups = @(); DroppedMembers = @(); Error = $_.Exception.Message }
         }
         $g | Add-Member -NotePropertyName Audit -NotePropertyValue $rec -Force
-        if ([string]$rec.State -eq 'Yellow') {
+        if ([string]$rec.State -eq 'Yellow' -or [string]$rec.State -eq 'Error') {
             $flagged++
             [void]$findings.Add([pscustomobject]@{ Group = $g; Record = $rec })
         }
