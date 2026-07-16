@@ -1814,6 +1814,122 @@ function Get-GroupCloudMembers {
     return ,@($members | Where-Object { -not [bool](Get-PropSafe $_ 'onPremisesSyncEnabled') })
 }
 
+function Get-AdMemberTree {
+    # Recursively walk an AD group's membership from its SID. Preserves nesting
+    # structure (does NOT use Get-ADGroupMember -Recursive, which flattens it).
+    param([string]$RootSid)
+    $visited = New-Object 'System.Collections.Generic.HashSet[string]'
+    $nested  = New-Object System.Collections.ArrayList
+    $leaves  = New-Object System.Collections.ArrayList
+    $stack   = New-Object System.Collections.Stack
+
+    $root = Get-ADGroup -Identity $RootSid -Properties member -ErrorAction Stop
+    if ($root.SID) { [void]$visited.Add([string]$root.SID.Value) }
+    foreach ($dn in @($root.member)) { $stack.Push([string]$dn) }
+
+    while ($stack.Count -gt 0) {
+        $dn = [string]$stack.Pop()
+        $o = Get-ADObject -Identity $dn -Properties objectSid, objectClass, displayName, sAMAccountName -ErrorAction SilentlyContinue
+        if ($null -eq $o) { continue }
+        $sid = ''
+        if ($o.objectSid) { $sid = [string]$o.objectSid.Value }
+        if ([string]$o.objectClass -eq 'group') {
+            [void]$nested.Add([pscustomobject]@{
+                Name  = [string]$o.displayName
+                DN    = [string]$o.DistinguishedName
+                Sid   = $sid
+                Class = 'group'
+            })
+            if ($sid -and -not $visited.Contains($sid)) {
+                [void]$visited.Add($sid)
+                $child = Get-ADGroup -Identity $dn -Properties member -ErrorAction SilentlyContinue
+                if ($child) { foreach ($m in @($child.member)) { $stack.Push([string]$m) } }
+            }
+        } else {
+            $nm = [string]$o.displayName
+            if ([string]::IsNullOrEmpty($nm)) { $nm = [string]$o.sAMAccountName }
+            [void]$leaves.Add([pscustomobject]@{
+                Name  = $nm
+                DN    = [string]$o.DistinguishedName
+                Sid   = $sid
+                Class = [string]$o.objectClass
+            })
+        }
+    }
+    return [pscustomobject]@{ Nested = $nested.ToArray(); Leaves = $leaves.ToArray() }
+}
+
+function Invoke-GroupForwardAudit {
+    # Forward (to-cloud) audit for one group. Assumes prerequisites already passed
+    # (Test-AuditPrerequisite) unless in demo mode.
+    param($Group)
+
+    if ($script:DemoMode) {
+        Start-Sleep -Milliseconds (10 + (Get-Random -Maximum 30))
+        $r = Get-Random -Maximum 100
+        $nested  = New-Object System.Collections.ArrayList
+        $dropped = New-Object System.Collections.ArrayList
+        if ($r -lt 20) {
+            [void]$nested.Add([pscustomobject]@{
+                Name = ($Group.Name + '-Nested')
+                DN   = ('CN=' + $Group.Name + '-Nested,OU=Groups,DC=contoso,DC=com')
+                Sid  = ('S-1-5-21-demo-' + (Get-Random -Maximum 9999))
+            })
+        }
+        if ($r -ge 15 -and $r -lt 38) {
+            $n = 1 + (Get-Random -Maximum 2)
+            for ($i = 0; $i -lt $n; $i++) {
+                [void]$dropped.Add([pscustomobject]@{
+                    Name  = "Unsynced User $i"
+                    Sid   = ('S-1-5-21-demo-' + (Get-Random -Maximum 9999))
+                    Class = 'user'
+                })
+            }
+        }
+        $state = 'Green'
+        if ($nested.Count -gt 0 -or $dropped.Count -gt 0) { $state = 'Yellow' }
+        return [pscustomobject]@{
+            GroupId = [string]$Group.Id; State = $state
+            NestedGroups = $nested.ToArray(); DroppedMembers = $dropped.ToArray(); Error = $null
+        }
+    }
+
+    $raw = Get-PropSafe $Group 'Raw'
+    $sid = [string](Get-PropSafe $raw 'onPremisesSecurityIdentifier')
+    # No AD SID => cloud-born object; nothing on-prem to drop.
+    if ([string]::IsNullOrEmpty($sid)) {
+        return [pscustomobject]@{ GroupId = [string]$Group.Id; State = 'Green'; NestedGroups = @(); DroppedMembers = @(); Error = $null }
+    }
+
+    # 1) AD side: recursive membership tree.
+    $tree = Get-AdMemberTree -RootSid $sid
+
+    # 2) Entra side: transitive membership SIDs actually present in the cloud.
+    $uri = 'https://graph.microsoft.com/v1.0/groups/' + [string]$Group.Id + '/transitiveMembers/microsoft.graph.directoryObject?$select=id,onPremisesSecurityIdentifier'
+    $cloudMembers = Invoke-GraphGetAll -Uri $uri
+    $cloudSids = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($m in @($cloudMembers)) {
+        $s = [string](Get-PropSafe $m 'onPremisesSecurityIdentifier')
+        if (-not [string]::IsNullOrEmpty($s)) { [void]$cloudSids.Add($s) }
+    }
+
+    # 3) Diff: AD leaf members absent from the cloud copy are dropped after conversion.
+    $dropped = New-Object System.Collections.ArrayList
+    foreach ($leaf in @($tree.Leaves)) {
+        $ls = [string]$leaf.Sid
+        if ([string]::IsNullOrEmpty($ls) -or -not $cloudSids.Contains($ls)) {
+            [void]$dropped.Add([pscustomobject]@{ Name = [string]$leaf.Name; Sid = $ls; Class = [string]$leaf.Class })
+        }
+    }
+
+    $state = 'Green'
+    if (@($tree.Nested).Count -gt 0 -or $dropped.Count -gt 0) { $state = 'Yellow' }
+    return [pscustomobject]@{
+        GroupId = [string]$Group.Id; State = $state
+        NestedGroups = @($tree.Nested); DroppedMembers = $dropped.ToArray(); Error = $null
+    }
+}
+
 #endregion
 
 # ============================================================================
