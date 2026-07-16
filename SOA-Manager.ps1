@@ -1962,6 +1962,45 @@ function Export-ViewCsv {
     )
 }
 
+function Export-GroupAudit {
+    # Flatten audit findings (one row per nested group / dropped member) to CSV.
+    param([object[]]$Findings)
+    if (-not $Findings -or @($Findings).Count -eq 0) { return $null }
+    Confirm-SoaDirectory -Path $script:ExportDir
+    $file = Join-Path $script:ExportDir ("GroupAudit_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($f in @($Findings)) {
+        $g   = $f.Group
+        $rec = $f.Record
+        foreach ($ng in @($rec.NestedGroups)) {
+            [void]$rows.Add([pscustomobject]@{
+                GroupName   = [string]$g.Name
+                GroupId     = [string]$g.Id
+                FindingType = 'NestedGroup'
+                MemberName  = [string]$ng.Name
+                MemberSid   = [string]$ng.Sid
+                MemberClass = 'group'
+                Reason      = 'nested - stays on-prem, convert separately'
+            })
+        }
+        foreach ($dm in @($rec.DroppedMembers)) {
+            [void]$rows.Add([pscustomobject]@{
+                GroupName   = [string]$g.Name
+                GroupId     = [string]$g.Id
+                FindingType = 'DroppedMember'
+                MemberName  = [string]$dm.Name
+                MemberSid   = [string]$dm.Sid
+                MemberClass = [string]$dm.Class
+                Reason      = 'not in sync scope - dropped after conversion'
+            })
+        }
+    }
+    if ($rows.Count -eq 0) { return $null }
+    $rows.ToArray() | Export-Csv -Path $file -NoTypeInformation -Encoding UTF8
+    Write-SoaLog -Message ("Wrote {0} audit finding(s) to {1}." -f $rows.Count, $file) -Level OK
+    return $file
+}
+
 function Import-SelectionFile {
     param($Tab)
     $path = Show-InputModal -Title 'Bulk import' -Prompt 'Path to a CSV (Identity/UPN/Email/DisplayName column) or TXT (one identity per line). Matching entries get selected.' -Default ''
