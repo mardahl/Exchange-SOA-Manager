@@ -91,7 +91,7 @@ $ErrorActionPreference = 'Stop'
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.3.7'
+$script:Version = '1.3.8'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -1694,7 +1694,22 @@ function Convert-MailboxSoa {
         Set-Mailbox -Identity $Item.Id -IsExchangeCloudManaged $ToCloud -ErrorAction Stop
         return @{ Ok=$true; Msg='converted' }
     } catch {
-        return @{ Ok=$false; Msg=$_.Exception.Message }
+        # EXO REST cmdlets increasingly throw a terminating error whose
+        # Exception.Message is empty (real text sits in ErrorDetails.Message)
+        # even though the SOA change was applied server-side. Trust the actual
+        # state over the error record: re-read the mailbox and, if it already
+        # matches the target, report success. ponytail: one confirming re-read
+        # on the failure path only - no extra round trip on the happy path.
+        $errText = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($errText)) { $errText = $_.Exception.Message }
+        try {
+            $mb = Get-Mailbox -Identity $Item.Id -ErrorAction Stop
+            if ([bool](Get-PropSafe $mb 'IsExchangeCloudManaged') -eq $ToCloud) {
+                return @{ Ok=$true; Msg='converted (confirmed after error)' }
+            }
+        } catch { }
+        if ([string]::IsNullOrWhiteSpace($errText)) { $errText = 'unknown error (no message returned by Set-Mailbox)' }
+        return @{ Ok=$false; Msg=$errText }
     }
 }
 

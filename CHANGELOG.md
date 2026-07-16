@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-07-16
+
+### Fixed
+
+- **Mailbox conversions no longer report false failures.** `Set-Mailbox
+  -IsExchangeCloudManaged` has started throwing a terminating error whose
+  `Exception.Message` is empty even when the SOA change is applied
+  server-side, causing every mailbox conversion to log
+  `FAILED converting '<name>' (<id>): ` with no message while the change
+  actually took effect (visible after a reload). `Convert-MailboxSoa` now
+  reads `ErrorDetails.Message` as well, and on a caught error re-reads the
+  mailbox to confirm the real state before reporting failure.
+
 ## [1.3.7] - 2026-07-15
 
 ### Fixed
