@@ -1,12 +1,19 @@
 # Contributing
 
-Thanks for helping improve Exchange SOA Manager. The project is intentionally a
-**single, dependency-free PowerShell script** - please keep it that way.
+Thanks for helping improve Exchange SOA Manager. The project is a
+**dependency-free PowerShell TUI**: a thin `SOA-Manager.ps1` bootstrap plus
+one file per region under `src/` - please keep that shape.
 
 ## Ground rules
 
-1. **One file.** All runtime code lives in `SOA-Manager.ps1`. No companion
-   modules, no DLLs, no embedded binaries. Portability is the core feature.
+1. **Thin bootstrap, one file per region.** `SOA-Manager.ps1` is a small
+   bootstrap (help header, `param()`, StrictMode) that dot-sources every
+   `src/*.ps1` at script scope, then runs the Main event loop. All other
+   runtime code lives in `src/`, one file per `#region`, numbered so the
+   file-name sort order is the load order. No companion modules on the load
+   path other than these dot-sourced files, no DLLs, no embedded binaries, no
+   external module dependencies. Portability is still the core feature — the
+   launcher `.bat` unblocks the whole folder recursively.
 2. **Windows PowerShell 5.1 compatible.** The script must parse and run on
    5.1 *and* 7+. That means **no**:
    - ternary operator (`$x ? $a : $b`)
@@ -34,8 +41,7 @@ Thanks for helping improve Exchange SOA Manager. The project is intentionally a
 
 ```powershell
 Install-Module PSScriptAnalyzer -Scope CurrentUser
-$settings = @{ Rules = @{ PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1','7.0') } } }
-Invoke-ScriptAnalyzer -Path .\SOA-Manager.ps1 -Settings $settings -Severity Error,Warning
+Invoke-ScriptAnalyzer -Path .\SOA-Manager.ps1, .\src -Recurse -Settings .\PSScriptAnalyzerSettings.psd1 -Severity Error, Warning
 ```
 
 CI runs the same analyzer plus parse checks on both engines (Windows
@@ -65,25 +71,27 @@ check - that is exactly the scenario the tool warns about.
 
 ## Code map
 
-`SOA-Manager.ps1` is organized in regions - search for `#region`:
+The code is split into a bootstrap plus one file per region under `src/`:
 
-| Region | Contents |
+| File | Contents |
 |---|---|
-| Globals & State | Tabs, theme, glyphs, connection state |
-| Logging | `Write-SoaLog` (file + in-app ring buffer) |
-| Console / VT engine | Alt-buffer handling, VT enable, `Invoke-OnMainBuffer` |
-| Drawing primitives | `Get-PadCell`, `Add-FrameLine`, footer/badges |
-| Modals | Message / confirm / typed-confirm / input / report / progress |
-| Connections | EXO + Graph connect/disconnect, module install |
-| Graph REST helpers | Paged GET, `$batch` sync-behavior lookups |
-| Demo data | Generators used by `-Demo` |
-| Data fetchers | Mailboxes / groups / contacts / org config |
-| Backup, conversion, safety checks | The write paths |
-| CSV export / import | View export, bulk selection |
-| Conversion pipeline | Targets -> safety check -> confirm -> backup -> convert -> report |
-| Views | Per-tab renderers |
-| Key dispatch | Global + per-tab key handling |
-| Main | Init, event loop, cleanup |
+| `SOA-Manager.ps1` | Bootstrap: help header, `param()`, StrictMode, dot-source loop, Main event loop |
+| `src/00-globals.ps1` | Tabs, theme, glyphs, connection state |
+| `src/05-logging.ps1` | `Write-SoaLog` (file + in-app ring buffer) |
+| `src/10-console-vt.ps1` | Alt-buffer handling, VT enable, `Invoke-OnMainBuffer` |
+| `src/15-drawing.ps1` | `Get-PadCell`, `Add-FrameLine`, footer/badges |
+| `src/20-modals.ps1` | Message / confirm / typed-confirm / input / report / progress |
+| `src/25-data-helpers.ps1` | Shared data-shaping helpers (`Get-PropSafe`, etc.) |
+| `src/30-connections.ps1` | EXO + Graph connect/disconnect, module install |
+| `src/35-graph-rest.ps1` | Paged GET, `$batch` sync-behavior lookups |
+| `src/40-demo-data.ps1` | Generators used by `-Demo` |
+| `src/45-data-fetchers.ps1` | Mailboxes / groups / contacts / org config |
+| `src/50-backup-conversion.ps1` | Backup + conversion + safety-check write paths |
+| `src/55-csv.ps1` | CSV export of the current view, CSV/TXT bulk import |
+| `src/60-conversion-pipeline.ps1` | Targets -> safety check -> confirm -> backup -> convert -> report |
+| `src/65-views.ps1` | Per-tab renderers |
+| `src/70-org-actions.ps1` | Organization-wide default switch |
+| `src/75-key-dispatch.ps1` | Global + per-tab key handling |
 
 ### Conventions that bite if ignored
 

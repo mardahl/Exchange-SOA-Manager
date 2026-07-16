@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-A portable, single-file PowerShell **terminal UI** for managing **Source of Authority (SOA)** in Exchange Online / Microsoft Entra hybrid environments.
+A portable, dependency-free PowerShell **terminal UI** for managing **Source of Authority (SOA)** in Exchange Online / Microsoft Entra hybrid environments.
 
 Switch Exchange attribute management between **on-premises** and **cloud** for mailboxes, convert the object-level SOA of **groups** and **contacts**, and control the **tenant-wide default** for new dir-synced mailboxes - all from one keyboard-driven console app. Built for the road toward decommissioning the *Last Exchange Server*.
 
@@ -162,7 +162,7 @@ Mailbox conversions only change **Exchange attribute** management - the identity
 ## Contributing
 
 Bug reports and PRs are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for
-the ground rules (single file, PS 5.1 compatible, safety UX) and a scripted
+the ground rules (bootstrap + `src/` region files, PS 5.1 compatible, safety UX) and a scripted
 tmux recipe for testing the TUI. CI enforces PSScriptAnalyzer and parse checks
 on both PowerShell engines. Release notes live in [CHANGELOG.md](CHANGELOG.md).
 
