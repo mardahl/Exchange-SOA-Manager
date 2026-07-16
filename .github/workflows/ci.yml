@@ -21,17 +21,9 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $settings = @{
-              Rules = @{
-                  PSUseCompatibleSyntax = @{
-                      Enable         = $true
-                      TargetVersions = @('5.1', '7.0')
-                  }
-              }
-          }
-          $results = Invoke-ScriptAnalyzer -Path ./SOA-Manager.ps1 -Settings $settings -Severity Error, Warning
+          $results = Invoke-ScriptAnalyzer -Path ./SOA-Manager.ps1, ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 -Severity Error, Warning
           if ($results.Count -gt 0) {
-              $results | Format-Table RuleName, Severity, Line, Message -AutoSize | Out-String | Write-Host
+              $results | Format-Table RuleName, ScriptName, Line, Message -AutoSize | Out-String | Write-Host
               throw "PSScriptAnalyzer reported $($results.Count) finding(s)."
           }
           Write-Host 'PSScriptAnalyzer: clean.'
@@ -46,12 +38,17 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Engine: $($PSVersionTable.PSVersion)"
-          $errs = $null; $tokens = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\SOA-Manager.ps1", [ref]$tokens, [ref]$errs)
-          if ($errs.Count -gt 0) {
-              $errs | ForEach-Object { Write-Host ("L{0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
-              throw "Parse errors under Windows PowerShell 5.1."
+          $files = @("$PWD\SOA-Manager.ps1") + (Get-ChildItem "$PWD\src\*.ps1" | ForEach-Object FullName)
+          $failed = 0
+          foreach ($file in $files) {
+              $errs = $null; $tokens = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errs)
+              if ($errs.Count -gt 0) {
+                  $failed++
+                  $errs | ForEach-Object { Write-Host ("{0} L{1}: {2}" -f (Split-Path $file -Leaf), $_.Extent.StartLineNumber, $_.Message) }
+              }
           }
+          if ($failed -gt 0) { throw "Parse errors under Windows PowerShell 5.1 in $failed file(s)." }
           Write-Host 'Parse OK under Windows PowerShell 5.1.'
 
   parse-ps7:
@@ -64,10 +61,15 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Engine: $($PSVersionTable.PSVersion)"
-          $errs = $null; $tokens = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/SOA-Manager.ps1", [ref]$tokens, [ref]$errs)
-          if ($errs.Count -gt 0) {
-              $errs | ForEach-Object { Write-Host ("L{0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
-              throw "Parse errors under PowerShell 7."
+          $files = @("$PWD/SOA-Manager.ps1") + (Get-ChildItem "$PWD/src/*.ps1" | ForEach-Object FullName)
+          $failed = 0
+          foreach ($file in $files) {
+              $errs = $null; $tokens = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errs)
+              if ($errs.Count -gt 0) {
+                  $failed++
+                  $errs | ForEach-Object { Write-Host ("{0} L{1}: {2}" -f (Split-Path $file -Leaf), $_.Extent.StartLineNumber, $_.Message) }
+              }
           }
+          if ($failed -gt 0) { throw "Parse errors under PowerShell 7 in $failed file(s)." }
           Write-Host 'Parse OK under PowerShell 7.'
