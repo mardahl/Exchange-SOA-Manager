@@ -10,3 +10,4 @@ docs/
 Thumbs.db
 *.swp
 .vscode/
+.worktrees/
