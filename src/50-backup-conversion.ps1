@@ -52,6 +52,7 @@ function Convert-MailboxSoa {
         if ((Get-Random -Maximum 100) -lt 4) { return @{ Ok=$false; Msg='demo: simulated transient error' } }
         return @{ Ok=$true; Msg='converted' }
     }
+    Write-SoaLog -Message ("Set-Mailbox -Identity '{0}' -IsExchangeCloudManaged {1}" -f $Item.Id, $ToCloud) -Level DEBUG
     try {
         Set-Mailbox -Identity $Item.Id -IsExchangeCloudManaged $ToCloud -ErrorAction Stop
         return @{ Ok=$true; Msg='converted' }
@@ -62,6 +63,7 @@ function Convert-MailboxSoa {
         # state over the error record: re-read the mailbox and, if it already
         # matches the target, report success. ponytail: one confirming re-read
         # on the failure path only - no extra round trip on the happy path.
+        Write-SoaErrorLog -Context ("Convert-MailboxSoa failed for '{0}'" -f $Item.Name) -ErrorRecord $_
         $errText = $_.ErrorDetails.Message
         if ([string]::IsNullOrWhiteSpace($errText)) { $errText = $_.Exception.Message }
         try {
@@ -87,9 +89,11 @@ function Convert-GraphSoa {
     try {
         $uri = ('https://graph.microsoft.com/v1.0/' + $resource + '/' + $Item.Id + '/onPremisesSyncBehavior')
         $body = @{ isCloudManaged = $ToCloud } | ConvertTo-Json
+        Write-SoaLog -Message ("PATCH {0} body={1}" -f $uri, $body) -Level DEBUG
         [void](Invoke-GraphWorker -Job @{ method='PATCH'; uri=$uri; body=$body; contentType='application/json' })
         return @{ Ok=$true; Msg='converted' }
     } catch {
+        Write-SoaErrorLog -Context ("Convert-GraphSoa failed for '{0}'" -f $Item.Name) -ErrorRecord $_
         return @{ Ok=$false; Msg=$_.Exception.Message }
     }
 }

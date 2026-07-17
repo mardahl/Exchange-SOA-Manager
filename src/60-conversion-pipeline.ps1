@@ -51,6 +51,7 @@ function Invoke-SoaConversion {
                 }
             } catch {
                 Write-SoaLog -Message ("Cloud-member check failed for group '{0}': {1}" -f $g.Name, $_.Exception.Message) -Level WARN
+                Write-SoaErrorLog -Context ("Get-GroupCloudMembers failed for group '{0}'" -f $g.Name) -ErrorRecord $_
                 [void]$findings.Add(@{ Group=$g; Members=@(); CheckFailed=$_.Exception.Message })
             }
             $idx++
@@ -130,7 +131,7 @@ function Invoke-SoaConversion {
             [ordered]@{ Item=$_.Raw; Soa=$_.Soa; Type=$_.Type; CapturedAt=(Get-Date -Format o) }
         })
         try { $backupFile = Save-BackupFile -Records $records -Kind $Tab.Name } catch {
-            Write-SoaLog -Message ("Backup failed: {0}" -f $_.Exception.Message) -Level ERROR
+            Write-SoaErrorLog -Context 'Save-BackupFile failed' -ErrorRecord $_
             if (-not (Show-ConfirmModal -Title 'Backup failed' -Lines @($_.Exception.Message, '', 'Continue WITHOUT a backup?') -Danger)) { return }
         }
     }
@@ -151,6 +152,7 @@ function Invoke-SoaConversion {
                 [void]$mailboxBackups.Add($rec)
             } catch {
                 $backupOk = $false
+                Write-SoaErrorLog -Context ("Get-MailboxBackupRecord failed for '{0}'" -f $item.Name) -ErrorRecord $_
                 $res = @{ Ok=$false; Msg=("backup failed, conversion skipped: " + $_.Exception.Message) }
             }
             if ($backupOk) { $res = Convert-MailboxSoa -Item $item -ToCloud $ToCloud }
@@ -176,7 +178,7 @@ function Invoke-SoaConversion {
 
     if ($isMailboxTab -and $mailboxBackups.Count -gt 0) {
         try { $backupFile = Save-BackupFile -Records $mailboxBackups.ToArray() -Kind 'Mailboxes' } catch {
-            Write-SoaLog -Message ("Writing mailbox backup file failed: {0}" -f $_.Exception.Message) -Level ERROR
+            Write-SoaErrorLog -Context 'Save-BackupFile (mailboxes) failed' -ErrorRecord $_
         }
     }
 
