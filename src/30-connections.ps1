@@ -35,6 +35,8 @@ function Connect-ExoService {
         Write-Host '  Using PIM?    : activate the role BEFORE completing sign-in.' -ForegroundColor Yellow
         try {
             Import-Module ExchangeOnlineManagement -ErrorAction Stop
+            $loaded = Get-Module -Name ExchangeOnlineManagement | Select-Object -First 1
+            if ($loaded) { Write-SoaLog -Message ("Module loaded: ExchangeOnlineManagement v{0}" -f $loaded.Version) }
             Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
         } catch {
             $script:LastConnectError = $_.Exception.Message
@@ -165,7 +167,10 @@ Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
 $ctx = Get-MgContext
 $acct = ''
 if ($ctx) { $acct = [string]$ctx.Account }
-@{ type='ready'; account=$acct } | ConvertTo-Json -Compress
+$gmod = Get-Module -Name Microsoft.Graph.Authentication | Select-Object -First 1
+$gver = ''
+if ($gmod) { $gver = [string]$gmod.Version }
+@{ type='ready'; account=$acct; graphModuleVersion=$gver } | ConvertTo-Json -Compress
 $in = [Console]::In
 while ($null -ne ($line = $in.ReadLine())) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
@@ -230,6 +235,9 @@ while ($null -ne ($line = $in.ReadLine())) {
         throw $err
     }
     $gw.Account = [string]$readyObj.account
+    if ($readyObj.graphModuleVersion) {
+        Write-SoaLog -Message ("Module loaded (Graph worker): Microsoft.Graph.Authentication v{0}" -f $readyObj.graphModuleVersion)
+    }
     return $true
 }
 

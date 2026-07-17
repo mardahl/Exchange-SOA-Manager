@@ -109,6 +109,15 @@ $script:DebugLog = [bool]$DebugLog
 
 Write-SoaLog -Message ('=' * 60)
 Write-SoaLog -Message ("Exchange SOA Manager v{0} started (PS {1}, Demo={2}, DebugLog={3})" -f $script:Version, $PSVersionTable.PSVersion, $script:DemoMode, $script:DebugLog)
+Write-SoaLog -Message ("OS: {0}" -f [System.Environment]::OSVersion.VersionString)
+foreach ($modName in @('ExchangeOnlineManagement','Microsoft.Graph.Authentication')) {
+    $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
+    if ($installed) {
+        Write-SoaLog -Message ("Module installed: {0} v{1}" -f $modName, $installed.Version)
+    } else {
+        Write-SoaLog -Message ("Module installed: {0} NOT INSTALLED" -f $modName) -Level WARN
+    }
+}
 Write-SoaLog -Message ('=' * 60)
 
 if ($script:DemoMode) {
