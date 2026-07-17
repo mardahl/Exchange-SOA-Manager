@@ -2,7 +2,7 @@
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.3.8'
+$script:Version = '1.4.0'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
