@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-17
+
+### Fixed
+- **`-DebugLog` switch had no effect.** In a top-level `.ps1` script the
+  `-DebugLog` parameter and `$script:DebugLog` are the same variable;
+  `src/00-globals.ps1`'s own default (`$script:DebugLog = $false`, dot-sourced
+  after the parameter binds) silently reset it back to false regardless of
+  what was passed on the command line, so DEBUG-level logging never
+  activated. The switch's value is now captured before the dot-source loop
+  runs and applied afterward.
+
 ## [1.5.0] - 2026-07-17
 
 ### Added
