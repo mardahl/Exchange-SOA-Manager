@@ -21,7 +21,8 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $results = Invoke-ScriptAnalyzer -Path ./SOA-Manager.ps1, ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 -Severity Error, Warning
+          $results = @(Invoke-ScriptAnalyzer -Path ./SOA-Manager.ps1 -Settings ./PSScriptAnalyzerSettings.psd1 -Severity Error, Warning)
+          $results += @(Invoke-ScriptAnalyzer -Path ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 -Severity Error, Warning)
           if ($results.Count -gt 0) {
               $results | Format-Table RuleName, ScriptName, Line, Message -AutoSize | Out-String | Write-Host
               throw "PSScriptAnalyzer reported $($results.Count) finding(s)."
