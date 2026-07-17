@@ -11,6 +11,7 @@ if (-not $script:Root) {
 }
 
 $script:LogFile   = Join-Path $script:Root ("SOA-Manager_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+$script:DebugLog  = $false
 $script:BackupDir = Join-Path $script:Root 'SOA-Backups'
 $script:ExportDir = Join-Path $script:Root 'SOA-Exports'
 $script:LogBuffer = New-Object System.Collections.ArrayList

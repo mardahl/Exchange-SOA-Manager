@@ -82,7 +82,8 @@
 param(
     [switch]$Demo,
     [switch]$Ascii,
-    [switch]$NoDisconnect
+    [switch]$NoDisconnect,
+    [switch]$DebugLog
 )
 
 Set-StrictMode -Version 2.0
@@ -104,9 +105,10 @@ foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filt
 # ============================================================================
 $script:DemoMode = [bool]$Demo
 $script:KeepSessions = [bool]$NoDisconnect
+$script:DebugLog = [bool]$DebugLog
 
 Write-SoaLog -Message ('=' * 60)
-Write-SoaLog -Message ("Exchange SOA Manager v{0} started (PS {1}, Demo={2})" -f $script:Version, $PSVersionTable.PSVersion, $script:DemoMode)
+Write-SoaLog -Message ("Exchange SOA Manager v{0} started (PS {1}, Demo={2}, DebugLog={3})" -f $script:Version, $PSVersionTable.PSVersion, $script:DemoMode, $script:DebugLog)
 Write-SoaLog -Message ('=' * 60)
 
 if ($script:DemoMode) {
