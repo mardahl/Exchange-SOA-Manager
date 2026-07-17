@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Verbose error logging: failed conversions now log full exception detail
+  (type, message, Graph/EXO response body, inner exceptions, stack trace)
+  instead of a single message line.
+- Startup log banner reports installed and loaded ExchangeOnlineManagement /
+  Microsoft.Graph.Authentication module versions.
+- New `-DebugLog` switch (and a commented-out line in
+  `Launch-SOA-Manager.bat`) enables per-item conversion tracing (DEBUG log
+  level).
+
 ## [1.4.0] - 2026-07-17
 
 ### Added
