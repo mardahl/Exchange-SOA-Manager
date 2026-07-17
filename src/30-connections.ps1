@@ -40,6 +40,7 @@ function Connect-ExoService {
             Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
         } catch {
             $script:LastConnectError = $_.Exception.Message
+            Write-SoaErrorLog -Context 'Connect-ExoService: Connect-ExchangeOnline failed' -ErrorRecord $_
         }
     }
     # Verify the session actually exists.
@@ -97,6 +98,7 @@ function Connect-GraphService {
             if ($started) { $script:Conn.Graph = $true }
         } catch {
             $script:LastConnectError = $_.Exception.Message
+            Write-SoaErrorLog -Context 'Connect-GraphService: Start-GraphWorker failed' -ErrorRecord $_
             Write-Host "Graph worker failed: $($_.Exception.Message)" -ForegroundColor Red
             Start-Sleep -Seconds 2
         }
@@ -198,10 +200,12 @@ while ($null -ne ($line = $in.ReadLine())) {
         }
     } catch {
         $msg = $_.Exception.Message
+        $exType = $_.Exception.GetType().FullName
         if ($_.Exception -is [System.Management.Automation.MethodInvocationException] -and $_.Exception.InnerException) {
             $msg = $_.Exception.InnerException.Message
+            $exType = $_.Exception.InnerException.GetType().FullName
         }
-        @{ type='err'; id=$job.id; message=$msg } | ConvertTo-Json -Compress
+        @{ type='err'; id=$job.id; message=$msg; exceptionType=$exType } | ConvertTo-Json -Compress
     }
 }
 '@ | Set-Content -LiteralPath $tmp -Encoding UTF8
@@ -259,7 +263,9 @@ function Invoke-GraphWorker {
     }
     $obj = $resp | ConvertFrom-Json
     if ($obj.type -eq 'err') {
-        throw [string]$obj.message
+        $msg = [string]$obj.message
+        if ($obj.exceptionType) { $msg = "{0} ({1})" -f $msg, [string]$obj.exceptionType }
+        throw $msg
     }
     return $obj.value
 }
