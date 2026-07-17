@@ -90,6 +90,13 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:Root = $PSScriptRoot
+# Captured before dot-sourcing src/*.ps1: in a top-level script, $DebugLog
+# (the parameter) and $script:DebugLog are the SAME variable, and
+# src/00-globals.ps1 sets $script:DebugLog = $false as its own default. If we
+# read $DebugLog after the dot-source loop, that default has already
+# clobbered whatever the caller passed in on the command line. Capturing it
+# into a differently-named variable first survives the loop untouched.
+$script:DebugLogRequested = [bool]$DebugLog
 
 # ============================================================================
 # Load modules. Dot-sourced with the `foreach` statement (NOT ForEach-Object)
@@ -105,7 +112,7 @@ foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filt
 # ============================================================================
 $script:DemoMode = [bool]$Demo
 $script:KeepSessions = [bool]$NoDisconnect
-$script:DebugLog = [bool]$DebugLog
+$script:DebugLog = $script:DebugLogRequested
 
 Write-SoaLog -Message ('=' * 60)
 Write-SoaLog -Message ("Exchange SOA Manager v{0} started (PS {1}, Demo={2}, DebugLog={3})" -f $script:Version, $PSVersionTable.PSVersion, $script:DemoMode, $script:DebugLog)
