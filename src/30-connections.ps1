@@ -253,6 +253,7 @@ function Invoke-GraphWorker {
     }
     if (-not $Job.ContainsKey('id')) { $Job['id'] = [Guid]::NewGuid().ToString('n') }
     $line = $Job | ConvertTo-Json -Depth 5 -Compress
+    Write-SoaLog -Message ("Graph request: {0}" -f $line) -Level DEBUG
     $gw.StdIn.WriteLine($line)
     $resp = $gw.StdOut.ReadLine()
     if (-not $resp) {
@@ -261,6 +262,7 @@ function Invoke-GraphWorker {
         Stop-GraphWorker
         throw ('Graph worker closed the response stream. {0}' -f $stderr)
     }
+    Write-SoaLog -Message ("Graph response: {0}" -f $resp) -Level DEBUG
     $obj = $resp | ConvertFrom-Json
     if ($obj.type -eq 'err') {
         $msg = [string]$obj.message
