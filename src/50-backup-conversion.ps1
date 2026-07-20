@@ -54,7 +54,13 @@ function Convert-MailboxSoa {
     }
     Write-SoaLog -Message ("Set-Mailbox -Identity '{0}' -IsExchangeCloudManaged {1}" -f $Item.Id, $ToCloud) -Level DEBUG
     try {
-        Set-Mailbox -Identity $Item.Id -IsExchangeCloudManaged $ToCloud -ErrorAction Stop
+        # [void] is load-bearing: EXO 3.10.0 Set-Mailbox -IsExchangeCloudManaged
+        # emits an object on success. Without this it leaks into the function's
+        # output, making the returned hashtable an Object[]; the caller then
+        # reads $res['Ok']/$res['Msg'] as empty and logs a false FAILED with a
+        # blank message even though the conversion applied. ponytail: suppress
+        # at the source rather than defensively unwrap in every caller.
+        [void](Set-Mailbox -Identity $Item.Id -IsExchangeCloudManaged $ToCloud -ErrorAction Stop)
         return @{ Ok=$true; Msg='converted' }
     } catch {
         # EXO REST cmdlets increasingly throw a terminating error whose

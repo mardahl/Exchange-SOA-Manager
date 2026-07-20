@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-20
+
+### Fixed
+- **Mailbox conversions reported a false `FAILED` with a blank message.**
+  `ExchangeOnlineManagement` 3.10.0's `Set-Mailbox -IsExchangeCloudManaged`
+  emits an object on success. That output leaked into `Convert-MailboxSoa`'s
+  return value, turning the result hashtable into an `Object[]`; the pipeline
+  then read `Ok`/`Msg` as empty and logged
+  `FAILED converting '<name>' (<id>): ` with no message and no error detail,
+  even though the SOA change was applied. The `Set-Mailbox` call is now wrapped
+  in `[void](...)` so success output can no longer pollute the return value.
+
 ## [1.5.1] - 2026-07-17
 
 ### Fixed
