@@ -5,6 +5,8 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Downloads](https://img.shields.io/github/downloads/mardahl/Exchange-SOA-Manager/total)](https://github.com/mardahl/Exchange-SOA-Manager/releases)
+![Visitors](https://komarev.com/ghpvc/?username=mardahl&repo=Exchange-SOA-Manager&label=Visitors)
 
 A portable, dependency-free PowerShell **terminal UI** for managing **Source of Authority (SOA)** in Exchange Online / Microsoft Entra hybrid environments.
 
