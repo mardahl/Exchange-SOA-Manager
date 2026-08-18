@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-08-18
+
+### Fixed
+- **Graph connection failed with `Invalid JSON primitive: WARNING` after
+  Exchange module loaded.** After `ExchangeOnlineManagement` was imported in
+  the parent process, warning text leaked onto the Graph worker's stdout
+  channel, breaking the JSON envelope protocol (`ConvertFrom-Json` failed on
+  `WARNING.`). The worker now prefixes every envelope with `SOA::` and sends
+  warnings/verbose/info to stderr; the parent drains stderr into the debug
+  log and skips non-envelope stdout lines, so worker diagnostics are visible
+  and the protocol stays clean.
+
 ## [1.5.2] - 2026-07-20
 
 ### Fixed
