@@ -149,6 +149,10 @@ function Stop-GraphWorker {
         try { Remove-Item -LiteralPath $gw.WorkerPath -ErrorAction SilentlyContinue } catch { }
         $gw.WorkerPath = $null
     }
+    if ($gw.StdErrTask) {
+        try { $gw.StdErrTask.Wait(500) } catch { }
+        $gw.StdErrTask = $null
+    }
     $gw.LastError = ''
 }
 
@@ -163,16 +167,19 @@ function Start-GraphWorker {
 param([string]$ScopeList)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+# Send non-JSON output (warnings, verbose, info) to stderr so stdout stays a
+# clean JSON channel. Parent drains stderr into the debug log.
+function Send-Envelope($obj) { Write-Output ('SOA::' + ($obj | ConvertTo-Json -Depth 10 -Compress)) }
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop 3>&1 4>&1 5>&1 6>&1 | ForEach-Object { [Console]::Error.WriteLine($_) }
 $scopes = $ScopeList -split '\|'
-Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
+Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop 3>&1 4>&1 5>&1 6>&1 | ForEach-Object { [Console]::Error.WriteLine($_) }
 $ctx = Get-MgContext
 $acct = ''
 if ($ctx) { $acct = [string]$ctx.Account }
 $gmod = Get-Module -Name Microsoft.Graph.Authentication | Select-Object -First 1
 $gver = ''
 if ($gmod) { $gver = [string]$gmod.Version }
-@{ type='ready'; account=$acct; graphModuleVersion=$gver } | ConvertTo-Json -Compress
+Send-Envelope @{ type='ready'; account=$acct; graphModuleVersion=$gver }
 $in = [Console]::In
 while ($null -ne ($line = $in.ReadLine())) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
@@ -183,18 +190,18 @@ while ($null -ne ($line = $in.ReadLine())) {
                 $hdr = @{ }
                 if ($job.headers) { foreach ($h in $job.headers.PSObject.Properties) { $hdr[$h.Name] = $h.Value } }
                 $resp = Invoke-MgGraphRequest -Method GET -Uri $job.uri -Headers $hdr -OutputType PSObject -ErrorAction Stop
-                @{ type='ok'; id=$job.id; value=$resp } | ConvertTo-Json -Depth 10 -Compress
+                Send-Envelope @{ type='ok'; id=$job.id; value=$resp }
             }
             'PATCH' {
                 [void](Invoke-MgGraphRequest -Method PATCH -Uri $job.uri -Body $job.body -ContentType 'application/json' -OutputType PSObject -ErrorAction Stop)
-                @{ type='ok'; id=$job.id } | ConvertTo-Json -Compress
+                Send-Envelope @{ type='ok'; id=$job.id }
             }
             'POST' {
                 $body = $job.body
                 $ct = $job.contentType
                 if (-not $ct) { $ct = 'application/json' }
                 $resp = Invoke-MgGraphRequest -Method POST -Uri $job.uri -Body $body -ContentType $ct -OutputType PSObject -ErrorAction Stop
-                @{ type='ok'; id=$job.id; value=$resp } | ConvertTo-Json -Depth 10 -Compress
+                Send-Envelope @{ type='ok'; id=$job.id; value=$resp }
             }
             default { throw "Unknown method $($job.method)" }
         }
@@ -205,7 +212,7 @@ while ($null -ne ($line = $in.ReadLine())) {
             $msg = $_.Exception.InnerException.Message
             $exType = $_.Exception.InnerException.GetType().FullName
         }
-        @{ type='err'; id=$job.id; message=$msg; exceptionType=$exType } | ConvertTo-Json -Compress
+        Send-Envelope @{ type='err'; id=$job.id; message=$msg; exceptionType=$exType }
     }
 }
 '@ | Set-Content -LiteralPath $tmp -Encoding UTF8
@@ -224,14 +231,29 @@ while ($null -ne ($line = $in.ReadLine())) {
     $gw.StdOut = $proc.StandardOutput
     $gw.StdErr = $proc.StandardError
     $gw.Account = ''
-    # Read the ready line (or error). The sign-in is synchronous in the child,
-    # so this blocks until the user completes auth in the browser.
-    $ready = $gw.StdOut.ReadLine()
-    if (-not $ready) {
+    # Drain worker stderr into the debug log on a background task. Keeps the
+    # stderr pipe from filling and preserves worker diagnostics for debugging.
+    $gw.StdErrTask = [System.Threading.Tasks.Task]::Run([Action]{
+        param($sr)
+        while ($null -ne ($l = $sr.ReadLine())) {
+            Write-SoaLog -Message ("[GraphWorker] {0}" -f $l) -Level DEBUG
+        }
+    }, $proc.StandardError)
+    # Read the ready envelope. Sign-in is synchronous in the child, so this
+    # blocks until the user completes auth in the browser. Anything not
+    # prefixed with SOA:: on stdout is noise and is logged then skipped.
+    $readyObj = $null
+    while ($null -ne ($line = $gw.StdOut.ReadLine())) {
+        if ($line.StartsWith('SOA::')) {
+            $readyObj = $line.Substring(5) | ConvertFrom-Json
+            break
+        }
+        Write-SoaLog -Message ("[GraphWorker stdout noise] {0}" -f $line) -Level DEBUG
+    }
+    if ($null -eq $readyObj) {
         Stop-GraphWorker
         throw 'Graph worker exited before signalling readiness.'
     }
-    $readyObj = $ready | ConvertFrom-Json
     if ($readyObj.type -ne 'ready') {
         $err = $readyObj.message
         if (-not $err) { $err = 'Graph worker failed during authentication.' }
@@ -255,15 +277,21 @@ function Invoke-GraphWorker {
     $line = $Job | ConvertTo-Json -Depth 5 -Compress
     Write-SoaLog -Message ("Graph request: {0}" -f $line) -Level DEBUG
     $gw.StdIn.WriteLine($line)
-    $resp = $gw.StdOut.ReadLine()
-    if (-not $resp) {
-        $stderr = ''
-        try { $stderr = $gw.StdErr.ReadToEnd() } catch { }
-        Stop-GraphWorker
-        throw ('Graph worker closed the response stream. {0}' -f $stderr)
+    # Skip stdout noise; only SOA:: envelopes are protocol data. stderr is
+    # drained by the background task and shows up in the debug log.
+    $obj = $null
+    while ($null -ne ($resp = $gw.StdOut.ReadLine())) {
+        if ($resp.StartsWith('SOA::')) {
+            Write-SoaLog -Message ("Graph response: {0}" -f $resp.Substring(5)) -Level DEBUG
+            $obj = $resp.Substring(5) | ConvertFrom-Json
+            break
+        }
+        Write-SoaLog -Message ("[GraphWorker stdout noise] {0}" -f $resp) -Level DEBUG
     }
-    Write-SoaLog -Message ("Graph response: {0}" -f $resp) -Level DEBUG
-    $obj = $resp | ConvertFrom-Json
+    if ($null -eq $obj) {
+        Stop-GraphWorker
+        throw 'Graph worker closed the response stream.'
+    }
     if ($obj.type -eq 'err') {
         $msg = [string]$obj.message
         if ($obj.exceptionType) { $msg = "{0} ({1})" -f $msg, [string]$obj.exceptionType }
