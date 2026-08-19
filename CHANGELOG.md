@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-08-19
+
+### Fixed
+- **`PropertyNotFoundException: StdErrLines` crash on worker startup.**
+  Follow-up to 1.5.6: the `StdErrLines` queue key was assigned dynamically
+  but never added to the `$script:GraphWorker` state hashtable, so the first
+  `Stop-GraphWorker` call threw under `Set-StrictMode -Version 2.0`.
+
 ## [1.5.7] - 2026-08-19
 
 ### Fixed
@@ -363,7 +371,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.6...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.8...HEAD
+[1.5.8]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.7...v1.5.8
+[1.5.7]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.6...v1.5.7
 [1.5.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.3...v1.5.4
