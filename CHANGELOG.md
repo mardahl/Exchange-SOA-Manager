@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-08-19
+
+### Fixed
+- **Graph connection crashed with `Cannot find an overload for "Run" and the
+  argument count: "2"` on Windows PowerShell 5.1.** The stderr drain used
+  `Task.Run(Action, state)`, an overload that does not exist on .NET
+  Framework 4.x. Scriptblocks on `Task.Run` also fail because threadpool
+  threads have no default runspace. The drain now runs in a dedicated
+  `[PowerShell]` runspace, which works identically on 5.1 and 7.
+
 ## [1.5.4] - 2026-08-19
 
 ### Fixed
@@ -331,7 +341,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.4...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.5...HEAD
+[1.5.5]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.3...v1.5.4
 [1.3.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.5...v1.3.6
 [1.3.1]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.0...v1.3.1

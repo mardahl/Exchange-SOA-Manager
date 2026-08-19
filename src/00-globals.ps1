@@ -2,7 +2,7 @@
 #region Globals & State
 # ============================================================================
 
-$script:Version = '1.5.4'
+$script:Version = '1.5.5'
 $script:ESC     = [char]27
 $script:IsWin   = ($PSVersionTable.PSVersion.Major -lt 6) -or ($null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and $IsWindows)
 
@@ -31,7 +31,7 @@ $script:GraphWorker = @{
     StdIn      = $null   # StreamWriter
     StdOut     = $null   # StreamReader
     StdErr     = $null   # StreamReader
-    StdErrTask = $null   # background task draining worker stderr
+    StdErrTask = $null   # @{PowerShell;Handle} runspace draining worker stderr
     LastError  = ''
     WorkerPath = ''
     Account    = ''

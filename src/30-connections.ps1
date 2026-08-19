@@ -150,7 +150,9 @@ function Stop-GraphWorker {
         $gw.WorkerPath = $null
     }
     if ($gw.StdErrTask) {
-        try { $gw.StdErrTask.Wait(500) } catch { }
+        try { $gw.StdErrTask.PowerShell.Stop() } catch { }
+        try { $gw.StdErrTask.PowerShell.Dispose() } catch { }
+        try { $gw.StdErrTask.PowerShell.Runspace.Dispose() } catch { }
         $gw.StdErrTask = $null
     }
     $gw.LastError = ''
@@ -231,14 +233,21 @@ while ($null -ne ($line = $in.ReadLine())) {
     $gw.StdOut = $proc.StandardOutput
     $gw.StdErr = $proc.StandardError
     $gw.Account = ''
-    # Drain worker stderr into the debug log on a background task. Keeps the
-    # stderr pipe from filling and preserves worker diagnostics for debugging.
-    $gw.StdErrTask = [System.Threading.Tasks.Task]::Run([Action]{
-        param($sr)
-        while ($null -ne ($l = $sr.ReadLine())) {
-            Write-SoaLog -Message ("[GraphWorker] {0}" -f $l) -Level DEBUG
+    # Drain worker stderr into the debug log in a dedicated runspace. Keeps
+    # the stderr pipe from filling and preserves worker diagnostics. A plain
+    # scriptblock on Task.Run fails on PS 5.1/.NET Framework (no Run overload
+    # with state) and on any thread without a default runspace.
+    $drain = [PowerShell]::Create()
+    $drain.Runspace = [RunspaceFactory]::CreateRunspace()
+    $drain.Runspace.Open()
+    $drain.Runspace.SessionStateProxy.SetVariable('SoaSr', $proc.StandardError)
+    $drain.Runspace.SessionStateProxy.SetVariable('SoaLogFn', ${function:Write-SoaLog})
+    [void]$drain.AddScript({
+        while ($null -ne ($l = $SoaSr.ReadLine())) {
+            & $SoaLogFn -Message ("[GraphWorker] {0}" -f $l) -Level DEBUG
         }
-    }, $proc.StandardError)
+    })
+    $gw.StdErrTask = @{ PowerShell = $drain; Handle = $drain.BeginInvoke() }
     # Read the ready envelope. Sign-in is synchronous in the child, so this
     # blocks until the user completes auth in the browser. Anything not
     # prefixed with SOA:: on stdout is noise and is logged then skipped.
