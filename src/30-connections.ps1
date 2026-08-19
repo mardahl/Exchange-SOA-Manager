@@ -155,6 +155,7 @@ function Stop-GraphWorker {
         try { $gw.StdErrTask.PowerShell.Runspace.Dispose() } catch { }
         $gw.StdErrTask = $null
     }
+    $gw.StdErrLines = $null
     $gw.LastError = ''
 }
 
@@ -233,17 +234,21 @@ while ($null -ne ($line = $in.ReadLine())) {
     $gw.StdOut = $proc.StandardOutput
     $gw.StdErr = $proc.StandardError
     $gw.Account = ''
-    # Drain worker stderr into the debug log in a dedicated runspace. Keeps
-    # the stderr pipe from filling and preserves worker diagnostics. A plain
-    # scriptblock on Task.Run fails on PS 5.1/.NET Framework (no Run overload
-    # with state) and on any thread without a default runspace.
+    # Drain worker stderr in a dedicated runspace. Keeps the stderr pipe from
+    # filling. Lines are appended to a thread-safe shared queue so early worker
+    # failures are visible even when the debug log is off, and mirrored into
+    # the debug log. A plain scriptblock on Task.Run fails on PS 5.1/.NET
+    # Framework (no Run overload with state) and on threads without a runspace.
+    $gw.StdErrLines = [System.Collections.Queue]::Synchronized([System.Collections.Queue]::new())
     $drain = [PowerShell]::Create()
     $drain.Runspace = [RunspaceFactory]::CreateRunspace()
     $drain.Runspace.Open()
     $drain.Runspace.SessionStateProxy.SetVariable('SoaSr', $proc.StandardError)
+    $drain.Runspace.SessionStateProxy.SetVariable('SoaQ', $gw.StdErrLines)
     $drain.Runspace.SessionStateProxy.SetVariable('SoaLogFn', ${function:Write-SoaLog})
     [void]$drain.AddScript({
         while ($null -ne ($l = $SoaSr.ReadLine())) {
+            [void]$SoaQ.Enqueue($l)
             & $SoaLogFn -Message ("[GraphWorker] {0}" -f $l) -Level DEBUG
         }
     })
@@ -260,8 +265,13 @@ while ($null -ne ($line = $in.ReadLine())) {
         Write-SoaLog -Message ("[GraphWorker stdout noise] {0}" -f $line) -Level DEBUG
     }
     if ($null -eq $readyObj) {
+        Start-Sleep -Milliseconds 300   # let the drain flush remaining stderr
+        $detail = @($gw.StdErrLines) -join "`n"
+        $exit = ''
+        try { if ($proc.HasExited) { $exit = " (exit code $($proc.ExitCode))" } } catch { }
         Stop-GraphWorker
-        throw 'Graph worker exited before signalling readiness.'
+        if ($detail) { throw "Graph worker exited before signalling readiness$exit. Worker stderr: $detail" }
+        throw "Graph worker exited before signalling readiness$exit."
     }
     if ($readyObj.type -ne 'ready') {
         $err = $readyObj.message

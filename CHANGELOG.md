@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-08-19
+
+### Fixed
+- **Worker startup failures were invisible without `-DebugLog`.** The stderr
+  drain only wrote to the debug log, so a Graph worker that died before
+  signalling readiness reported the bare `Graph worker exited before
+  signalling readiness.` with no cause. Drained stderr lines now also land in
+  a thread-safe queue, and the thrown error includes the worker's stderr text
+  and process exit code.
+
 ## [1.5.5] - 2026-08-19
 
 ### Fixed
@@ -341,7 +351,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.5...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.6...HEAD
+[1.5.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.3...v1.5.4
 [1.3.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.5...v1.3.6
