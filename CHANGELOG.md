@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-08-19
+
+### Fixed
+- **Graph connection crashed with `PropertyNotFoundException: StdErrTask`.**
+  Under `Set-StrictMode -Version 2.0`, reading a missing hashtable key throws.
+  `$script:GraphWorker` was initialised without the `StdErrTask` key (added in
+  1.5.3), so the first `Stop-GraphWorker` cleanup call inside
+  `Start-GraphWorker` failed before the key was ever assigned. The key is now
+  part of the initial state hashtable.
+
 ## [1.5.3] - 2026-08-18
 
 ### Fixed
@@ -321,7 +331,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.6...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.4...HEAD
+[1.5.4]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.3...v1.5.4
 [1.3.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.5...v1.3.6
 [1.3.1]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.2.3...v1.3.0
