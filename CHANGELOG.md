@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.5.6] - 2026-08-19
+## [1.5.7] - 2026-08-19
 
 ### Fixed
 - **Graph sign-in failed with `A window handle must be configured` on
@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Connect-MgGraph` threw `AuthenticationFailedException` before sign-in
   could even start. The worker now shares the parent's console
   (`CreateNoWindow = $false`), giving WAM a valid handle.
+
+## [1.5.6] - 2026-08-19
+
+### Fixed
+- **Worker startup failures were invisible without `-DebugLog`.** The stderr
+  drain only wrote to the debug log, so a Graph worker that died before
+  signalling readiness reported the bare `Graph worker exited before
+  signalling readiness.` with no cause. Drained stderr lines now also land in
+  a thread-safe queue, and the thrown error includes the worker's stderr text
+  and process exit code.
 
 ## [1.5.5] - 2026-08-19
 
