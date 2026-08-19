@@ -32,7 +32,6 @@ $script:GraphWorker = @{
     StdOut     = $null   # StreamReader
     StdErr     = $null   # StreamReader
     StdErrTask = $null   # @{PowerShell;Handle} runspace draining worker stderr
-    StdErrLines= $null   # synchronized Queue of drained stderr lines
     LastError  = ''
     WorkerPath = ''
     Account    = ''
