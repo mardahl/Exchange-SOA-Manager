@@ -320,7 +320,9 @@ function Invoke-GraphWorker {
         if ($obj.exceptionType) { $msg = "{0} ({1})" -f $msg, [string]$obj.exceptionType }
         throw $msg
     }
-    return $obj.value
+    # PATCH/204 responses carry no 'value' key; Get-PropSafe keeps StrictMode
+    # from throwing on the missing property.
+    return (Get-PropSafe -Obj $obj -Name 'value')
 }
 
 function Disconnect-AllServices {

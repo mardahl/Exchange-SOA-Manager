@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-08-19
+
+### Fixed
+- **False failure when converting contacts/groups to cloud-managed.**
+  `PATCH .../onPremisesSyncBehavior` returns 204 No Content, so the Graph
+  worker's `ok` envelope carried no `value` key. Reading `$obj.value` in
+  `Invoke-GraphWorker` threw `PropertyNotFoundException` under
+  `Set-StrictMode -Version 2.0`, marking the conversion as failed even
+  though Graph had already applied the change. Response value is now read
+  via `Get-PropSafe`, returning `$null` for bodyless responses.
+
 ## [1.5.8] - 2026-08-19
 
 ### Fixed
@@ -371,7 +382,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: PSScriptAnalyzer (with 5.1/7.0 syntax compatibility rules) and parse
   checks on both Windows PowerShell 5.1 and PowerShell 7.
 
-[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.8...HEAD
+[Unreleased]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.9...HEAD
+[1.5.9]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.8...v1.5.9
 [1.5.8]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.7...v1.5.8
 [1.5.7]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.6...v1.5.7
 [1.5.6]: https://github.com/mardahl/Exchange-SOA-Manager/compare/v1.5.5...v1.5.6
